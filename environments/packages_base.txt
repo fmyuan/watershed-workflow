@@ -1,0 +1,39 @@
+# packages required for running WW
+python 3.10
+numpy
+matplotlib
+scipy
+pandas
+#meshpy
+fiona
+rasterio
+shapely 1.8.5
+cartopy
+descartes
+pyproj
+requests
+sortedcontainers
+attrs
+pip
+libarchive
+h5py
+netCDF4
+cftime
+pytest
+nbmake
+ipympl
+ipython
+# extra packages needed in the WW env when building for a user
+ipykernel
+papermill
+ipympl
+# extras packages needed in the WW env when building for development
+sphinx
+numpydoc
+sphinx_rtd_theme
+nbsphinx
+ipython
+# my personal extras that go in my user env
+matplotlib
+gitpython
+mpi4py

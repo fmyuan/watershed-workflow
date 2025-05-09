@@ -1,0 +1,6 @@
+# extras packages needed in the WW env when building for development
+sphinx
+numpydoc
+sphinx_rtd_theme
+nbsphinx
+ipython
