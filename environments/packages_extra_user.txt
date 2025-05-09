@@ -1,0 +1,7 @@
+# extra packages needed in the WW env when building for a user
+ipykernel
+papermill
+ipympl
+gitpython
+netCDF4
+mpi4py
