@@ -1,0 +1,21 @@
+# Currently only a few parameters are possible
+
+[DEFAULT]
+
+# Watershed workflow stores all data in a common library for shared
+# use across the machine.  This directory defaults to:
+#
+ data_directory : /home/jovyan/work/data
+
+# We rely extensively on downloaded files, which are certified via the
+# SSL library.  Sometimes certificates are tricky, and if your
+# certificates aren't working, it can be useful to try other
+# certificate files, such as your system ones (likely installed
+# somewhere like /etc/ssl/cert.pem ).  If you're really desparate and
+# not worried about getting hacked, you can set this to False to not
+# verify certificates, but that is not recommended.  Likely if you
+# have trouble, the first thing to try is to update your certifi
+# package in anaconda (conda update certifi)
+#
+# ssl_cert : True
+
