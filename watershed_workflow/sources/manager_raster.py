@@ -29,7 +29,7 @@ class ManagerRaster:
     def getDataset(self,
                    geometry : shapely.geometry.Polygon | \
                               shapely.geometry.MultiPolygon | \
-                              Tuple[float,float,float,float],
+                              tuple[float,float,float,float],
                    geometry_crs : watershed_workflow.crs.CRS,
                    band : int = 1) -> xarray.DataArray:
         """Read a raster as a dataset on this shape, clipping to the shape.
