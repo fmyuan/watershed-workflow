@@ -2,6 +2,13 @@ import pytest
 import numpy as np
 import warnings
 
+'''
+# when debugging internally, need to mannually append root path for modules
+# and may need to uninstall watershed_workflow package, e.g. python command: python -m pip uninstall watershed_workflow  
+import os, sys
+sys.path.append(os.path.abspath('./watershed-workflow'))
+'''
+
 import watershed_workflow.mesh
 
 from watershed_workflow.test.shapes import two_boxes
@@ -71,3 +78,9 @@ def test_write():
         import xarray
         with xarray.open_dataset('./mesh.exo') as fid:
             assert 20 == fid.sizes['num_el_in_blk1']
+
+'''
+# Example to test python module internally            
+if __name__ == '__main__':
+    test_write()
+'''
