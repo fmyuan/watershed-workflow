@@ -10,11 +10,11 @@ import numpy as np
 from pyproj import Transformer
 from pyproj import CRS
 
-from pytools.commons_utils.Modules_netcdf import geotiff2nc
+from watershed_workflow.elm_ncoperator import geotiff2nc
 from geopandas.tools.sjoin import sjoin_nearest
 
 
-def domain_unstructured_fromraster_cavm(output_pathfile='./domain.lnd.pan-arctic_CAVM.1km.1d.c241018.nc', \
+def domain_unstructured_fromraster(output_pathfile='./domain.lnd.pan-arctic_CAVM.1km.1d.c241018.nc', \
                                    rasterfile='./raster_cavm_v1.tif', outdata=False):
     
     # 1000mx1000m grids extracted from CAVM image (geotiff) file
