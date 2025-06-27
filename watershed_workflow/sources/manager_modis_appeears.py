@@ -416,9 +416,16 @@ class FileManagerMODISAppEEARS:
             profile['layer'] = varname
 
             times = nc.variables['time'][:].filled(-1)
-            print(times[0])
-            time_origin = cftime.datetime(2000, 1, 1)
-            times = np.array([time_origin + datetime.timedelta(days=int(t)) for t in times])
+            print('data initial time: ', times[0])
+            # it better to read time unit directly from netcdf file
+            if('units' in nc.variables['time'].ncattrs()):
+                tunit = nc.variables['time'].getncattr('units')
+                print('with unit: ', tunit)
+                times=cftime.num2date(times, tunit)
+                print('initial time converted to: ', times[0])
+            else:
+                time_origin = cftime.datetime(2000, 1, 1)
+                times = np.array([time_origin + datetime.timedelta(days=int(t)) for t in times])
 
             data = nc.variables[varname][:]
             if np.issubdtype(data.dtype, np.integer):
