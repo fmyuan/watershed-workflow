@@ -30,6 +30,10 @@ RUN --mount=type=cache,target=/opt/conda/pkgs \
 # test the environment
 RUN ${CONDA_BIN} run --name ${env_name} python -c "import pymetis; import geopandas"
 
+# set compilers from watershed_workflow_tools environment
+ENV COMPILERS=/opt/conda/envs/watershed_workflow_tools 
+ENV PATH="${COMPILERS}/bin:${PATH}"
+
 #
 # Stage 2 -- add in the pip
 #
@@ -48,10 +52,6 @@ RUN ${CONDA_BIN} run --name ${env_name} python -c "import meshpy"
 #
 FROM ww_env_pip_ci AS ww_env_exodus_ci
 
-ENV COMPILERS=/opt/conda/envs/watershed_workflow_tools 
-ENV PATH="$COMPILERS/bin:$PATH"
-
-ENV PATH=/opt/conda/envs/watershed_workflow_tools/bin:${PATH}
 ENV SEACAS_DIR="/opt/conda/envs/${env_name}"
 ENV CONDA_PREFIX="/opt/conda/envs/${env_name}"
 
