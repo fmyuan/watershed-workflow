@@ -519,12 +519,21 @@ def adjustHUCsToRiverMesh(hucs: SplitHUCs, river: River, coords: np.ndarray) -> 
                     # point to put on the reach junction element
                     # coordinate, and wierd stuff would probably
                     # happen in triangulation anyway.
-                    assert touches[touch_i-1][0] is None or touches[touch_i-1][0] < 0, \
-                        f"Neighboring touch at reach {reach.index} coords {reach.linestring.coords[0]} is wierd"
-
-                    assert touches[(touch_i+1)%len(touches)][0] is None or touches[(touch_i+1)%len(touches)][0] < 0, \
-                        f"Neighboring touch at reach {reach.index} coords {reach.linestring.coords[0]} is wierd"
-
+                    try:
+                        assert touches[touch_i-1][0] is None or touches[touch_i-1][0] < 0, \
+                            f"Neighboring touch at reach {reach.index} coords {reach.linestring.coords[0]} is wierd"
+                    except AssertionError:
+                        #skip and next
+                        touch_i += 1
+                        continue
+                    try:
+                        assert touches[(touch_i+1)%len(touches)][0] is None or touches[(touch_i+1)%len(touches)][0] < 0, \
+                            f"Neighboring touch at reach {reach.index} coords {reach.linestring.coords[0]} is wierd"
+                    except AssertionError:
+                        #skip and next 
+                        touch_i += 1
+                        continue
+                    
                     # it is a HUC, insert the point
                     new_coord = coords[reach[names.ELEMS][0][point_i]]
                     old_coords = touches[touch_i][1].coords

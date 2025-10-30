@@ -171,11 +171,15 @@ def findOutletsByCrossings(hucs: SplitHUCs,
             my_inlet_locs.append(shapely.geometry.Point(inlet[0], inlet[1]))
         inlet_locs[pi] = my_inlet_locs
 
-    last_outlet_p = crossings_clusters_centroids[last_outlet]
-    last_outlet_loc = shapely.geometry.Point(last_outlet_p[0], last_outlet_p[1])
+    if last_outlet is not None:
+        last_outlet_p = crossings_clusters_centroids[last_outlet]
+        last_outlet_loc = shapely.geometry.Point(last_outlet_p[0], last_outlet_p[1])
 
-    hucs.exterior_outlet = last_outlet_loc
-    hucs.df[names.OUTLET] = outlet_locs.values()
+        hucs.exterior_outlet = last_outlet_loc
+        hucs.df[names.OUTLET] = outlet_locs.values()
+    else:
+        hucs.exterior_outlet = None
+        hucs.df[names.OUTLET] = None       
 
 
 def findOutletsByElevation(hucs: SplitHUCs, elev_raster: xarray.Dataset) -> None:

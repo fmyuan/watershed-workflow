@@ -52,7 +52,7 @@ dem_sources : Dict[str,Any] = {
     '3DEP 30m': Manager3DEP(30),
     '3DEP 10m': Manager3DEP(10),
 }
-default_dem_source = '3DEP 60m'
+default_dem_source = '3DEP 10m'
 
 # available and default soil survey datasets
 structure_sources : Dict[str,Any] = {
