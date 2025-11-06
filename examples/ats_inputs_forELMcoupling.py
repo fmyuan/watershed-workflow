@@ -6,8 +6,8 @@
 	It uses the following datasets:
 	
 		- NHD Plus for hydrography.
-	 	- 3DEP for elevation
-	 	- NLCD for land cover/transpiration/rooting depths
+		- 3DEP for elevation
+		- NLCD for land cover/transpiration/rooting depths
 		- MODIS for LAI
 		- GLYHMPS geology data for structural formations
 		- Pelletier for depth to bedrock and soil texture information
@@ -31,14 +31,20 @@
 
 """
 
+#########################################################################################################
+
+#--- #----- I. Pacakges Needed -----#
+
 # these can be turned on for development work
 #%load_ext autoreload
 #%autoreload 2
 
 import netCDF4
+
 # setting up logging first or else it gets preempted by another package
 import watershed_workflow.ui
 watershed_workflow.ui.setup_logging(1)
+
 import os,sys
 import logging
 import numpy as np
@@ -51,11 +57,12 @@ import cftime, datetime
 pd.options.display.max_columns = None
 
 
-## provide paths to relevant packages for mesh and input file generation 
+#--- provide paths to relevant packages for mesh and input file generation 
+
 # Set paths to relevant packages for mesh and input file generation
 # Update these paths to match your local installation
 #
-sys.path.append('/Users/f9y/micromamba/amanzi-ats-tools/seacas_exodus/lib')
+sys.path.append('/Users/f9y/micromamba/amanzi-ats-tools/seacas-exodus/lib')
 sys.path.append('/Users/f9y/micromamba/amanzi-ats-tools/amanzi_xml')
 os.environ['AMANZI_SRC_DIR']='/Users/f9y/mygithub/ATS_REPOS/amanzi'
 os.environ['ATS_SRC_DIR']='/Users/f9y/mygithub/ATS_REPOS/amanzi/src/physics/ats'
@@ -74,6 +81,7 @@ import watershed_workflow.resampling
 import watershed_workflow.condition
 import watershed_workflow.io
 import watershed_workflow.sources.standard_names as names
+import watershed_workflow.elm_domain
 
 import ats_input_spec
 import ats_input_spec.public
@@ -87,15 +95,18 @@ import amanzi_xml.utils.errors as aerrors
 plt.rcParams["figure.figsize"] = (8, 6)
 
 
+print(watershed_workflow.__file__)
 
-#--- Input: Parameters and other source data
+#########################################################################################################
+
+#--- #----- II. Input: Parameters and other source data -----#
 
 """
 Note, this section will need to be modified for other runs of this workflow in other regions.
 """
 
 # Force Watershed Workflow to pull data from this directory rather than a shared data directory.
-# This picks up the gcrew-specific datasets set up here to avoid large file downloads for 
+# This picks up the myname-specific datasets set up here to avoid large file downloads for 
 # demonstration purposes.
 #
 def splitPathFull(path):
@@ -119,15 +130,15 @@ def splitPathFull(path):
 
 cwd = splitPathFull(os.getcwd())
 
-# REMOVE THIS PORTION OF THE CELL for general use outside of gcrew -- this is just locating 
-# the working directory within the WW directory structure
+#--- REMOVE THIS PORTION OF THE CELL for general use outside of myname -- this is just locating 
+#--- the working directory within the WW directory structure
 if cwd[-1] == 'Coweeta':
     pass
 elif cwd[-1] == 'examples':
     cwd.append('Coweeta')
 else:
     cwd.extend(['examples','Coweeta'])
-# END REMOVE THIS PORTION
+#--- END REMOVE THIS PORTION
 
 myname = 'coweeta'
 
@@ -145,9 +156,10 @@ def toWorkingDir(filename):
     return os.path.join(work_dir, filename)
    
    
-# Set the data directory to the local space to get the locally downloaded files
-# REMOVE THIS CELL for general use outside of gcrew
+#--- Set the data directory to the local space to get the locally downloaded files
+# REMOVE THIS CELL for general use outside of my case area
 watershed_workflow.config.setDataDirectory(data_dir)
+
 
 ## Parameters cell -- this provides all parameters that can be changed via pipelining to generate a new watershed. 
 mycase_shapefile = os.path.join(data_dir, myname+'_basin.shp')
@@ -187,12 +199,13 @@ output_filenames = {}
 # Note that, by default, we tend to work in the DayMet CRS because this allows us to avoid
 # reprojecting meteorological forcing datasets.
 crs = watershed_workflow.crs.default_crs
+
 # get the shape and crs of the shape
 mycase_source = watershed_workflow.sources.ManagerShapefile(mycase_shapefile)
 mycase = mycase_source.getShapes(out_crs=crs)
 mycase.rename(columns={'AREA' : names.AREA}, inplace=True)
 
-# set up a dictionary of source objects
+#--- set up a dictionary of source objects
 #
 # Data sources, also called managers, deal with downloading and parsing data files from a variety of online APIs.
 sources = watershed_workflow.sources.getDefaultSources()
@@ -219,23 +232,28 @@ sources['geologic structure'] = watershed_workflow.sources.ManagerGLHYMPS(geo_fi
 # Here we will use a clipped version of that map.
 sources['depth to bedrock'] = watershed_workflow.sources.ManagerRaster(dtb_file)
 
+# END DELETE THIS SECTION
+
 # log the sources that will be used here
 watershed_workflow.sources.logSources(sources)
 
 
-#--- Basin Geometry
+#########################################################################################################
+
+#--- #----- III. Basin Geometry -----#
 
 """
 In this section, we choose the basin, the streams to be included in the stream-aligned mesh, and make sure that all are resolved discretely at appropriate length scales for this work.
 
 """
 
-#the Watershed
+#--- III-1. the Watershed
+
 # Construct and plot the WW object used for storing watersheds
 watershed = watershed_workflow.split_hucs.SplitHUCs(mycase)
 watershed.plot()
 
-#the Rivers
+#--- III-2. the Rivers
 # download/collect the river network within that shape's bounds
 reaches = sources['hydrography'].getShapesByGeometry(watershed.exterior, crs, out_crs=crs)
 rivers = watershed_workflow.river_tree.createRivers(reaches, method='hydroseq')
@@ -282,20 +300,16 @@ plot(watershed, rivers)
 # modifications.
 m = watershed.explore(marker=False)
 for river in rivers_orig:
-	if river['name'] is not None:
-		m = river.explore(m=m, column=None, color='black', name=river['name']+' raw', marker=False)
-    	
-	else:
-		m = river.explore(m=m, column=None, color='black', marker=False)
-
+    m = river.explore(m=m, column=None, color='black', name=river['name']+' raw', marker=False)
 for river in rivers:
     m = river.explore(m=m)
     
 m = watershed_workflow.makeMap(m)
 m
 
+#########################################################################################################
 
-#--- Mesh Geometry
+#--- #----- IV.  Mesh Geometry -----#
 
 """
 Discretely create the stream-aligned mesh. Download elevation data, and condition the mesh discretely to make for better topography.
@@ -308,17 +322,20 @@ min_angle = 32 # degrees
 # width of reach by stream order (order:width)
 widths = dict({1:8,2:12,3:16,4:20})
 
-# create the mesh
+#--- create the mesh (surface m2)
 m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers, 
                                                             river_width=widths,
                                                             refine_min_angle=min_angle,
                                                             refine_distance=[refine_d0, refine_A0, refine_d1, refine_A1],
                                                             diagnostics=True)
 
+# prepartition to maintain ordering
+m2 = m2.partition(16, True)
+
 # get a raster for the elevation map, based on 3DEP
 dem = sources['DEM'].getDataset(watershed.exterior.buffer(100), watershed.crs)['dem']
 
-# provide surface mesh elevations
+#--- provide surface mesh elevations
 watershed_workflow.elevate(m2, dem)
 
 # Plot the DEM raster
@@ -403,13 +420,13 @@ for ls in m2.labeled_sets:
 
 #########################################################################################################
 
-#--- Surface properties
+#--- #----- V. Surface properties -----#
 
 """
 Meshes interact with data to provide forcing, parameters, and more in the actual simulation. Specifically, we need vegetation type on the surface to provide information about transpiration and subsurface structure to provide information about water retention curves, etc.
 """
 
-#--- NLCD for LULC ---
+#--- V-1. NLCD for LULC ---
 
 """
 We'll start by downloading and collecting land cover from the NLCD dataset, and generate sets for each land cover type that cover the surface. Likely these will be some combination of grass, deciduous forest, coniferous forest, and mixed.
@@ -434,7 +451,7 @@ watershed_workflow.colors.createIndexedColorbar(ncolors=len(nlcd_indices),
 ax.set_title('Land Cover')
 plt.show()
 
-# map nlcd onto the mesh
+#--- map nlcd onto the mesh
 m2_nlcd = watershed_workflow.getDatasetOnMesh(m2, nlcd, method='nearest')
 m2.cell_data['land_cover'] = m2_nlcd
 
@@ -462,7 +479,7 @@ for ls in m2.labeled_sets:
     print(f'{ls.setid} : {ls.entity} : {len(ls.ent_ids)} : "{ls.name}"')
     
 
-#--- MODIS LAI ---
+#--- V-2. MODIS LAI ---
 
 """
 Leaf area index is needed on each land cover type -- this is used in the Evapotranspiration calculation.
@@ -496,6 +513,7 @@ modis_data['LULC'].plot.imshow()
 # compute the transient time series
 modis_lai = watershed_workflow.land_cover_properties.computeTimeSeries(modis_data['LAI'], modis_data['LULC'], 
                                                                       polygon=watershed.exterior, polygon_crs=watershed.crs)
+modis_lai
 
 # smooth the data in time
 modis_lai_smoothed = watershed_workflow.data.smoothTimeSeries(modis_lai, 'time')
@@ -506,15 +524,15 @@ watershed_workflow.io.writeTimeseriesToHDF5(output_filenames['modis_lai_transien
 watershed_workflow.land_cover_properties.plotLAI(modis_lai_smoothed, indices='MODIS')
 
 # compute a typical year
-modis_lai_typical = watershed_workflow.data.computeAverageYear(modis_lai_smoothed, 'time', output_nyears=10, 
-                                                                  start_year=2000)
+steadystate_td = datetime.timedelta(days=nyears_cyclic_steadystate*365)
+modis_lai_typical = watershed_workflow.data.computeAverageYear(modis_lai_smoothed, start-steadystate_td, output_nyears=10)
 
 output_filenames['modis_lai_cyclic_steadystate'] = toOutput(f'{myname}_LAI_MODIS_CyclicSteadystate.h5')
 watershed_workflow.io.writeTimeseriesToHDF5(output_filenames['modis_lai_cyclic_steadystate'], modis_lai_typical)
 watershed_workflow.land_cover_properties.plotLAI(modis_lai_typical, indices='MODIS')
 
 
-#--- Crosswalk of LAI to NLCD LC ---
+#--- V-3. Crosswalk of LAI to NLCD LC ---
 
 crosswalk = watershed_workflow.land_cover_properties.computeCrosswalk(modis_data['LULC'], nlcd, method='fractional area')
 
@@ -536,11 +554,12 @@ watershed_workflow.io.writeTimeseriesToHDF5(output_filenames['nlcd_lai_transient
 
 #########################################################################################################
 
-#--- Subsurface Soil, Geologic Structure ---
+#--- #----- VI. Subsurface Soil, Geologic Structure -----#
 
 
-# get NRCS shapes, on a reasonable crs
+#--- VI-1. get NRCS shapes, on a reasonable crs
 nrcs = sources['soil structure'].getShapesByGeometry(watershed.exterior, watershed.crs, out_crs=crs)
+nrcs
 
 # create a clean dataframe with just the data we will need for ATS
 def replace_column_nans(df, col_nan, col_replacement):
@@ -567,6 +586,7 @@ nrcs = nrcs[~nan_mask]
 
 assert nrcs['porosity [-]'][:].min() >= min_porosity
 assert nrcs['permeability [m^2]'][:].max() <= max_permeability
+nrcs
 
 # check for nans
 nrcs.isna().any()
@@ -613,7 +633,7 @@ watershed_workflow.colors.createIndexedColorbar(ncolors=len(nrcs),
 plt.show()
 
 #
-#--- Depth to Bedrock from SoilGrids ---
+#--- VI-2. Depth to Bedrock from SoilGrids ---
 
 dtb = sources['depth to bedrock'].getDataset(watershed.exterior, watershed.crs)['band_1']
 
@@ -628,7 +648,7 @@ gons = m2.plot(facecolors=m2.cell_data['dtb'], cmap='RdBu', edgecolors=None)
 plt.show()
 
 
-#--- GLHYMPs Geology ---
+#--- VI-3. GLHYMPs Geology ---
 
 glhymps = sources['geologic structure'].getShapesByGeometry(watershed.exterior.buffer(1000), watershed.crs, out_crs=crs)
 glhymps = watershed_workflow.soil_properties.mangleGLHYMPSProperties(glhymps,
@@ -644,7 +664,7 @@ glhymps
 print(glhymps.union_all().contains(watershed.exterior))
 glhymps
 
-# clean the data"
+# clean the data
 glhymps.pop('logk_stdev [-]')
 
 assert glhymps['porosity [-]'][:].min() >= min_porosity
@@ -703,7 +723,7 @@ m2.cell_data['geology_color'] = geology_color
                             
 geology_color_glhymps.min()
 
-#--- Combine to form a complete subsurface dataset ---#
+#--- VI-4. Combine to form a complete subsurface dataset -----#
 
 
 bedrock = watershed_workflow.soil_properties.getDefaultBedrockProperties()
@@ -719,7 +739,7 @@ subsurface_props
 
 #########################################################################################################
 
-#--- Extrude the 2D Mesh to make a 3D mesh ---#
+#--- #----- VII. Extrude the 2D Mesh to make a 3D mesh -----#
 
 # set the floor of the domain as max DTB
 dtb_max = np.nanmax(m2.cell_data['dtb'].values)
@@ -729,42 +749,48 @@ print(f'total thickness: {dtb_max} m')
 total_thickness = 50.
 
 
-# Generate a dz structure for the top 2m of soil
+#--- VII-1. Generate a dz structure for the top 2m of soil
 #
 # here we try for 10 cells, starting at 5cm at the top and going to 50cm at the bottom of the 2m thick soil
-dzs, res = watershed_workflow.mesh.optimizeDzs(0.05, 0.5, 2, 10)
-print(dzs)
-print(sum(dzs))
+#dzs, res = watershed_workflow.mesh.optimizeDzs(0.05, 0.5, 2, 10)
+#print(dzs)
+#print(sum(dzs))
 
 # this looks like it would work out, with rounder numbers:
 dzs_soil = [0.05, 0.05, 0.05, 0.12, 0.23, 0.5, 0.5, 0.5]
 print(sum(dzs_soil))
 
 # 50m total thickness, minus 2m soil thickness, leaves us with 48 meters to make up.
-# optimize again...
-dzs2, res2 = watershed_workflow.mesh.optimizeDzs(1, 10, 48, 8)
-print(dzs2)
-print(sum(dzs2))
+# optimize again... 
+# but never used afterward
+#dzs2, res2 = watershed_workflow.mesh.optimizeDzs(1, 10, 48, 8)
+#print(dzs2)
+#print(sum(dzs2))
+
+
+# dz structure from ELM soil column
+#zisoi, dzs_soil, zsoi = elm_domain.soilcolumn(more_vertlayers=False, nlevgrnd=15) 
+#total_thickness = sum(dzs_soil)
 
 # how about...
 dzs_geo = [1.0, 2.0, 4.0, 8.0, 11, 11, 11]
 print(dzs_geo)
 print(sum(dzs_geo))
 
-# layer extrusion
+# layer bottom(s)
 DTB = m2.cell_data['dtb'].values
 soil_color = m2.cell_data['soil_color'].values
 geo_color = m2.cell_data['geology_color'].values
 soil_thickness = m2.cell_data['soil thickness'].values
 
 
-# -- data structures needed for extrusion
+# data structures needed for extrusion
 layer_types = []
 layer_data = []
 layer_ncells = []
 layer_mat_ids = []
 
-# -- soil layer --
+#--- VII-2. soil layer
 depth = 0
 for dz in dzs_soil:
     depth += 0.5 * dz
@@ -781,7 +807,7 @@ for dz in dzs_soil:
     layer_mat_ids.append(soil_or_br_or_geo)
     depth += 0.5 * dz
     
-# -- geologic layer --
+#--- VII-3. geologic layer
 for dz in dzs_geo:
     depth += 0.5 * dz
     layer_types.append('constant')
@@ -803,7 +829,7 @@ subsurface_props_used = subsurface_props.loc[layer_mat_id_used]
 subsurface_props_used
 
 
-# extrude
+#--- VII-4. extrude to obtain m3 mesh3D
 m3 = watershed_workflow.mesh.Mesh3D.extruded_Mesh2D(m2, layer_types, layer_data, 
                                              layer_ncells, layer_mat_ids)
 
@@ -836,7 +862,7 @@ m3.writeExodus(output_filenames['mesh'])
 
 #########################################################################################################
 
-#--- Meteorological forcing dataset ---#
+#--- #------ VIII. Meteorological forcing dataset -----#
 
 # download the data -- note it is hourly!
 met_data_raw = sources['meteorology'].getDataset(watershed.exterior, crs, start_leap, end_leap)
@@ -907,7 +933,7 @@ met_data_noleap = watershed_workflow.data.filterLeapDay(met_data_warped)
 met_data_noleap
 
 # then compute a "typical" year
-met_data_typical = watershed_workflow.data.computeAverageYear(met_data_noleap, 'time', 2010, nyears_cyclic_steadystate)
+met_data_typical = watershed_workflow.data.computeAverageYear(met_data_noleap, (start - steadystate_td), nyears_cyclic_steadystate)
 
 # and lastly convert to ATS
 met_data_typical_ats = watershed_workflow.meteorology.convertAORCToATS(met_data_typical)
@@ -931,7 +957,7 @@ logging.info(f'Mean precip value = {precip_mean}')
 
 #########################################################################################################
 
-#--- Write ATS input files ----
+#--- #----- IX. Write ATS input files -----#
 
 """
 Now we have the mesh file written and all of the forcing datasets (meteorology, LAI) written. 
@@ -1005,9 +1031,6 @@ def add_land_cover(main_list):
     land_cover_list['Deciduous Forest']['capillary pressure at fully open stomata [Pa]'] = 35000 * .10
     land_cover_list['Deciduous Forest']['albedo of canopy [-]'] = 0.1
 
-##########################################################################
-
-
 # add soil sets: note we need a way to name the set, so we use, e.g. SSURGO-MUKEY.
 def soil_set_name(ats_id):
     return subsurface_props_used.loc[ats_id, 'name']
@@ -1054,11 +1077,18 @@ def get_main(steadystate=False):
     # add observations for each subcatchment
     if steadystate:
         time_args = {'cycles start period stop':[0,10,-1],}
+        obs = ats_input_spec.public.add_observation(main_list, "water_balance_computational_domain",
+                                               "water_balance_computational_domain.csv", obs_args=time_args)
+        obs_precip = ats_input_spec.public.add_observable(obs, 'water source [m^3 s^-1]', 'surface-precipitation', 'computational domain', 'integral', 'cell')
+        obs_q = ats_input_spec.public.add_observable(obs, 'net runoff [mol s^-1]', 'surface-water_flux', 'computational domain boundary', 'extensive integral', 'face')
+        obs_q['direction normalized flux'] = True
+
+        obs_wc = ats_input_spec.public.add_observable(obs, 'subsurface water content [mol]', 'water_content', 'computational domain', 'extensive integral', 'cell')
+        obs_wc = ats_input_spec.public.add_observable(obs, 'surface water content [mol]', 'surface-water_content', 'surface domain', 'extensive integral', 'cell')    
+
     else:
-        time_args = None
-    ats_input_spec.public.add_observations_water_balance(main_list, "computational domain", 
-                                                        "surface domain", "external sides",
-                                                        time_args=time_args)
+        ats_input_spec.public.add_observations_water_balance(main_list, "computational domain", 
+                                                        "surface domain", "external sides")
 
     return main_list
 
@@ -1100,18 +1130,13 @@ def populate_basic_properties(xml, main_xml):
     except aerrors.MissingXMLError:
         mp_list.append(lc_list)
 
-
-
-
-
-##########################################################################
-
+#--- write modules
 """
 For the first file, we load a spinup template and write the needed quantities into that file, saving it to the appropriate run directory. Note there is no DayMet or land cover or LAI properties needed for this run. The only property that is needed is the domain-averaged, mean annual rainfall rate. We then take off some for ET (note too wet spins up faster than too dry, so don't take off too much...).
 """
 def write_spinup_steadystate(name, precip_mean, **kwargs):
     # create the main list
-    main = get_main()
+    main = get_main(steadystate=True)
 
     # set precip to 0.6 * the mean precip value
     precip = main['state']['evaluators'].append_empty('surface-precipitation')
@@ -1210,4 +1235,30 @@ def write_transient(name, cyclic_steadystate=False, **kwargs):
 write_spinup_steadystate(myname, precip_mean)
 write_transient(myname, True)
 write_transient(myname, False)
+
+#########################################################################################################
+
+#--- #----- X. summary -----# 
+#
+# the following files were generated during this run:
+print(f'{"role":<35}: filename')
+print('-'*34, ': ', '-'*50)
+for k,v in output_filenames.items():
+    vs = list(splitPathFull(v))
+    if vs[-2] == myname:
+        v2 = vs[-1]
+    else:
+        v2 = os.path.join(vs[-2], vs[-1])
+    
+    print(f'{k:<35}: {v2}')
+
+
+# double-checking correct centroid info
+np.save('m3_bary_centroids.npy', m3.barycentric_centroids)
+
+logging.info('this workflow is a total success!')
+
+
+
+
 
