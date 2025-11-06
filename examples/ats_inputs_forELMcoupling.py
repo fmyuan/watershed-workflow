@@ -81,7 +81,7 @@ import watershed_workflow.resampling
 import watershed_workflow.condition
 import watershed_workflow.io
 import watershed_workflow.sources.standard_names as names
-import watershed_workflow.elm_domain
+import watershed_workflow.elm_domain as elm_domain
 
 import ats_input_spec
 import ats_input_spec.public
@@ -140,7 +140,15 @@ else:
     cwd.extend(['examples','Coweeta'])
 #--- END REMOVE THIS PORTION
 
+#--- A few user defined options
+# name of watershed or whatever for your cases
 myname = 'coweeta'
+
+#--- options for using ELM soil column layer structure
+ELM_SOILCOLUMN=True
+# by default, ELM soil layer number is 15. If  option true, it's 30
+# and ELM namelist flag: more_vertlayers = .true.
+MORE_VERTLAYERS=False
 
 # Note, this directory is where downloaded data will be put as well
 data_dir = os.path.join(*(cwd + ['input_data',]))
@@ -746,36 +754,31 @@ dtb_max = np.nanmax(m2.cell_data['dtb'].values)
 m2.cell_data['dtb'] = m2.cell_data['dtb'].fillna(dtb_max)
 
 print(f'total thickness: {dtb_max} m')
-total_thickness = 50.
+#total_thickness = 50.
 
 
 #--- VII-1. Generate a dz structure for the top 2m of soil
 #
-# here we try for 10 cells, starting at 5cm at the top and going to 50cm at the bottom of the 2m thick soil
-#dzs, res = watershed_workflow.mesh.optimizeDzs(0.05, 0.5, 2, 10)
-#print(dzs)
-#print(sum(dzs))
 
-# this looks like it would work out, with rounder numbers:
-dzs_soil = [0.05, 0.05, 0.05, 0.12, 0.23, 0.5, 0.5, 0.5]
-print(sum(dzs_soil))
+if ELM_SOILCOLUMN:
+	# dz structure from ELM soil column
+	zi_soil, dzs_soil, z_soil = elm_domain.soilcolumn(more_vertlayers=MORE_VERTLAYERS, nlevgrnd=15)   
+	total_thickness = sum(dzs_soil)
+	print('ELM soil column total thickness: ', sum(dzs_soil))
 
-# 50m total thickness, minus 2m soil thickness, leaves us with 48 meters to make up.
-# optimize again... 
-# but never used afterward
-#dzs2, res2 = watershed_workflow.mesh.optimizeDzs(1, 10, 48, 8)
-#print(dzs2)
-#print(sum(dzs2))
+	# no geolayer needed because ELM soil column thickness of ~42 m
+	dzs_geo = np.empty(0)
+else:
 
+	# this looks like it would work out, with rounder numbers:
+	dzs_soil = [0.05, 0.05, 0.05, 0.12, 0.23, 0.5, 0.5, 0.5]
+	print(sum(dzs_soil))
+	
+	# 50m total thickness, minus 2m soil thickness, leaves us with 48 meters to make up.
+	dzs_geo = [1.0, 2.0, 4.0, 8.0, 11, 11, 11]
+	print(dzs_geo)
+	print(sum(dzs_geo))
 
-# dz structure from ELM soil column
-#zisoi, dzs_soil, zsoi = elm_domain.soilcolumn(more_vertlayers=False, nlevgrnd=15) 
-#total_thickness = sum(dzs_soil)
-
-# how about...
-dzs_geo = [1.0, 2.0, 4.0, 8.0, 11, 11, 11]
-print(dzs_geo)
-print(sum(dzs_geo))
 
 # layer bottom(s)
 DTB = m2.cell_data['dtb'].values
