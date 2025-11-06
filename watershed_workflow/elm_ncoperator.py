@@ -632,11 +632,6 @@ def varmeanby1dim(ncfilein, ncfileout,dim_name,var_name='ALL',var_excl=''):
 #                    "non_vegetated",
 #                    "water"]}
 #geotiff2nc(file, bandinfos)
-'''
-file='raster_cavm_v1.tif'
-bandinfos={'bands':['grid_code']}
-geotiff2nc(file, bandinfos)
-'''
 
 #varmeanby1dim - examples for surface data generation to check single variable
 #varmeanby1dim('surfdata_pft.nc', 'surfdata_VIC.nc','gridcell', \

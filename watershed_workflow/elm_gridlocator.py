@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+
 import os, math
 import numpy as np
 
