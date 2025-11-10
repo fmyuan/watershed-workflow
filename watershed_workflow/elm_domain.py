@@ -6,8 +6,13 @@ import os
 import math
 import netCDF4 as nc
 import numpy as np
+    
+def elm_arcradians2_from_km2(area_km2, R_meters=6.37122e6):
+    one_over_re2 = 1.0e6/R_meters/R_meters
+    return area_km2 * one_over_re2
+#
 
-
+#--- #------ ELM soil column layer thickness and depths (nodes and interfaces) ------#
 def soilcolumn(more_vertlayers=False, nlevgrnd=15):
     
     # a few ELM constants relevant to soil column
@@ -107,10 +112,25 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     lat_arr = elmdomain_data['yc']
     xv_arr  = elmdomain_data['xv']
     yv_arr  = elmdomain_data['yv']
-    area_arr = elmdomain_data['area']
+    if 'area' in elmdomain_data.keys():
+        area_arr = elmdomain_data['area']
+    elif 'area_km2' in elmdomain_data.keys():         
+        area_arr = elm_arcradians2_from_km2(elmdomain_data['area_km2'])
+    else:
+        print('Error: either "area" or "area_km2" not existed!')
+        os.sys.exit(-1)
     mask_arr = elmdomain_data['mask']
     landfrac_arr = elmdomain_data['frac']
+    
+    # extra 
+    if 'area_km2' in elmdomain_data.keys():
+        array_km2_arr = elmdomain_data['area_km2']
   
+    nv = elmdomain_data['xv'].shape[1]
+    if nv!= elmdomain_data['yv'].shape[1]:
+        print('not equal vertices of xv: ', nv, ' and yv: ',elmdomain_data['yv'].shape[1])
+        os.sys.exit(-2)
+    
     # write to nc file
     file_name = ncfile
     print("The domain file to be write is " + file_name)
@@ -159,11 +179,11 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     if WRITE2D and (not 1 in lon_arr.shape):
         w_nc_fid.createDimension('ni', lon_arr.shape[1])
         w_nc_fid.createDimension('nj', lon_arr.shape[0])
-        w_nc_fid.createDimension('nv', 4)
+        w_nc_fid.createDimension('nv', nv)
     else:
         w_nc_fid.createDimension('ni', lon_arr.size)
         w_nc_fid.createDimension('nj', 1)
-        w_nc_fid.createDimension('nv', 4)
+        w_nc_fid.createDimension('nv', nv)
 
     if coord_system and 'X_axis' in elmdomain_data.keys():
         # for 2D <--> 1D indices
@@ -187,13 +207,13 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     w_nc_var.long_name = 'longitude of land gridcell center'
     w_nc_var.units = "degrees_east"
     w_nc_var.bounds = "xv"
-    w_nc_var.comment = 'by GCS_WGS_84, increasing from west to east'
+    w_nc_var.comment = 'increasing from west to east'
     w_nc_fid.variables['xc'][...] = lon_arr
         
     w_nc_var = w_nc_fid.createVariable('yc', np.float64, ('nj','ni'))
     w_nc_var.long_name = 'latitude of land gridcell center'
     w_nc_var.units = "degrees_north"
-    w_nc_var.comment = 'by GCS_WGS_84, decreasing from north to south'
+    w_nc_var.comment = 'decreasing from north to south'
     w_nc_fid.variables['yc'][...] = lat_arr
         
     # create the XC, YC variable        
@@ -201,11 +221,11 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     w_nc_var = w_nc_fid.createVariable('xv', np.float64, ('nj','ni','nv'))
     w_nc_var.long_name = 'longitude of land gridcell verticles'
     w_nc_var.units = "degrees_east"
-    w_nc_var.comment = 'by GCS_WGS_84, increasing from west (-180) to east (180), vertices ordering anti-clock from left-low corner'
+    w_nc_var.comment = 'increasing from west (-180) to east (180), vertices ordering anti-clock from left-low corner'
     w_nc_var = w_nc_fid.createVariable('yv', np.float64, ('nj','ni','nv'))
     w_nc_var.long_name = 'latitude of land gridcell verticles'
     w_nc_var.units = "degrees_north"
-    w_nc_var.comment = 'by GCS_WGS_84, decreasing from north to south, vertices ordering anti-clock from left-low corner'
+    w_nc_var.comment = 'decreasing from north to south, vertices ordering anti-clock from left-low corner'
 
     w_nc_fid.variables['xv'][...]= xv_arr
     w_nc_fid.variables['yv'][...]= yv_arr
@@ -216,6 +236,13 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     w_nc_var.units = "radian2" ;
     w_nc_fid.variables['area'][...] = area_arr
 
+    if 'area_km2' in elmdomain_data.keys():
+        w_nc_var = w_nc_fid.createVariable('area_km2', np.float64, ('nj','ni'))
+        w_nc_var.long_name = "area of grid cell in kilometers squared" ;
+        w_nc_var.coordinates = "xc yc" ;
+        w_nc_var.units = "km2" ;
+        w_nc_fid.variables['area_km2'][...] = array_km2_arr
+         
     w_nc_var = w_nc_fid.createVariable('mask', np.int32, ('nj','ni'))
     w_nc_var.long_name = "domain mask" ;
     w_nc_var.note = "unitless" ;

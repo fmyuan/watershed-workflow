@@ -398,8 +398,10 @@ ax.set_aspect('equal', 'datalim')
 mp2 = m2.plot(facecolors='elevation', edgecolors='white', ax=ax2, colorbar=False)
 ax2.set_aspect('equal', 'datalim')
 
-xlim = (1.1322e6, 1.1328e6)
-ylim = (1.4085e6, 1.4088e6)
+#xlim = (1.1322e6, 1.1328e6)
+#ylim = (1.4085e6, 1.4088e6)
+xlim = (np.min(m2.coords[:,0]), np.max(m2.coords[:,0]))
+ylim = (np.min(m2.coords[:,1]), np.max(m2.coords[:,1]))
 
 ax2.set_xlim(xlim)
 ax2.set_ylim(ylim)
@@ -763,11 +765,75 @@ print(f'total thickness: {dtb_max} m')
 if ELM_SOILCOLUMN:
 	# dz structure from ELM soil column
 	zi_soil, dzs_soil, z_soil = elm_domain.soilcolumn(more_vertlayers=MORE_VERTLAYERS, nlevgrnd=15)   
+	dzs_soil = dzs_soil[1:] # in ELM, layer indexing from 1. So need to do something here.
+	z_soil = z_soil[1:]
 	total_thickness = sum(dzs_soil)
 	print('ELM soil column total thickness: ', sum(dzs_soil))
 
 	# no geolayer needed because ELM soil column thickness of ~42 m
 	dzs_geo = np.empty(0)
+	
+	
+	# generate ELM domain.nc, unstructureed, from m2 surface mesh
+	elmdomain = {}
+	
+	ngrid = m2.num_cells
+	m2_crs = str(m2.crs)
+	if m2.crs.is_projected:
+		# need to transform proj to lat/lon
+		elm_crs = watershed_workflow.crs.latlon_crs
+		x = m2.centroids[:, 0]
+		y = m2.centroids[:, 1]
+		elmdomain['xc'], elmdomain['yc'] = \
+			watershed_workflow.warp.xy(x, y, m2.crs, elm_crs) 
+		
+	else:
+		elmdomain['xc'] = m2.centroids[:,0]
+		elmdomain['yc'] = m2.centroids[:,1]
+	elmdomain['zc'] = m2.centroids[:,2]
+	
+	nv = len(m2.conn[0])
+	elmdomain['xv'] = np.empty((ngrid,nv))
+	elmdomain['yv'] = np.empty((ngrid,nv))
+	elmdomain['zv'] = np.empty((ngrid,nv))
+	#elmdomain['area'] = np.empty(ngrid)  # need to be in arc-radian^2
+	elmdomain['area_km2'] = np.empty(ngrid)
+	for j in range(ngrid):
+		if river_mask[j]==1.0: continue
+		
+		if m2.crs.is_projected:
+			elm_crs = watershed_workflow.crs.latlon_crs
+			
+			x = m2.coords[m2.conn[j][:]][:,0]
+			y = m2.coords[m2.conn[j][:]][:,1]
+			lon, lat = watershed_workflow.warp.xy(x, y, m2.crs, elm_crs)
+			elmdomain['xv'][j,:] = lon
+			elmdomain['yv'][j,:] = lat
+		else:
+			elmdomain['xv'][j,:] = m2.coords[m2.conn[j][:]][:,0]
+			elmdomain['yv'][j,:] = m2.coords[m2.conn[j][:]][:,1]
+		vert3 = m2.coords[m2.conn[j][:]][:,0:2]
+		area_xy = watershed_workflow.utils.computeTriangleArea(*vert3)
+		elmdomain['area_km2'][j] = area_xy*1.0e-6
+		
+		elmdomain['zv'][j,:] = m2.coords[m2.conn[j][:]][:,2]
+	 
+	elmdomain['mask'] = np.ones(ngrid) # land mask always 1 now, but cautious near coastal region
+	elmdomain['mask'][np.where(river_mask==1.0)] = 0 # mask out river or water-body temporarily
+	elmdomain['frac'] = np.ones(ngrid)
+	elmdomain['frac'][np.where(river_mask==1.0)] = 0
+	
+	elmdomain['crs']=m2.crs
+	
+	ncf = 'domain.lnd.'+str(ngrid)+'x1pt.'+myname+'.nc'
+	output_filenames['elmdomain'] = toOutput(f'{ncf}')
+	try:
+		os.remove(output_filenames['elmdomain'])
+	except FileNotFoundError:
+		pass
+
+	elm_domain.domain_ncwrite(elmdomain, WRITE2D=False, ncfile=output_filenames['elmdomain'], coord_system=False)
+	
 else:
 
 	# this looks like it would work out, with rounder numbers:
