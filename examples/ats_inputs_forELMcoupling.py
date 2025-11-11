@@ -82,6 +82,7 @@ import watershed_workflow.condition
 import watershed_workflow.io
 import watershed_workflow.sources.standard_names as names
 import watershed_workflow.elm_domain as elm_domain
+import watershed_workflow.elm_mksrfdata as elm_mksrfdata
 
 import ats_input_spec
 import ats_input_spec.public
@@ -763,7 +764,7 @@ print(f'total thickness: {dtb_max} m')
 #
 
 if ELM_SOILCOLUMN:
-	# dz structure from ELM soil column
+#---	# VII-1A. dz structure from ELM soil column
 	zi_soil, dzs_soil, z_soil = elm_domain.soilcolumn(more_vertlayers=MORE_VERTLAYERS, nlevgrnd=15)   
 	dzs_soil = dzs_soil[1:] # in ELM, layer indexing from 1. So need to do something here.
 	z_soil = z_soil[1:]
@@ -774,7 +775,7 @@ if ELM_SOILCOLUMN:
 	dzs_geo = np.empty(0)
 	
 	
-	# generate ELM domain.nc, unstructureed, from m2 surface mesh
+#---	# VII-1A(1). generate ELM domain.nc, unstructureed, from m2 surface mesh
 	elmdomain = {}
 	
 	ngrid = m2.num_cells
@@ -825,17 +826,50 @@ if ELM_SOILCOLUMN:
 	
 	elmdomain['crs']=m2.crs
 	
-	ncf = 'domain.lnd.'+str(ngrid)+'x1pt.'+myname+'.nc'
-	output_filenames['elmdomain'] = toOutput(f'{ncf}')
+	ncf_domain = 'domain.lnd.'+str(ngrid)+'x1pt.'+myname+'.nc'
+	output_filenames['elmdomain'] = toOutput(f'{ncf_domain}')
 	try:
 		os.remove(output_filenames['elmdomain'])
 	except FileNotFoundError:
 		pass
 
 	elm_domain.domain_ncwrite(elmdomain, WRITE2D=False, ncfile=output_filenames['elmdomain'], coord_system=False)
-	
-else:
 
+#---	# VII-1A(2). extracting and re-distributing ELM surfdata*.nc, according to new domain.nc
+	# (CAN do offline, will move in)
+	ncf0 = 'surfdata_0.5x0.5_simyr1850_c240308_TOP.nc' # this will be from E3SM inputdata server or local
+	
+#---	# VII-1A(3). updating ELM surfdata*.nc, unstructureed, from m2 surface cell_data, if any
+	ncfin = 'surfdata_0.5x0.5_simyr1850_c240308_TOP-'+myname+'.nc'
+	ncf_surf = 'surfdata_'+str(ngrid)+'x1pt_simyr1850-'+myname+'.nc'
+	output_filenames['elmsurfdata'] = toOutput(f'{ncf_surf}')
+	
+	surf_from_atsm2 = {}
+	surf_from_atsm2['LATIXY'] = elmdomain['yc']
+	surf_from_atsm2['LONGXY'] = elmdomain['xc']
+	
+	# elevation -> 'TOPO'
+	surf_vars = 'TOPO'
+	surf_from_atsm2['TOPO'] = m2.centroids[:,2]
+		
+	elm_mksrfdata.mksrfdata_updatevals(toOutput(f'{ncfin}'), \
+						fsurfnc_out=output_filenames['elmsurfdata'], \
+						user_srf_data=surf_from_atsm2, \
+						user_srf_vars=surf_vars)
+
+
+    # visualizing ELM data, as needed
+	elmvar = 'TOPO'
+	if True:
+		m2.cell_data[elmvar] = surf_from_atsm2[elmvar]
+
+		# simply plotting
+		elmvar_gons = m2.plot(facecolors=m2.cell_data[elmvar], cmap='RdBu', edgecolors=None)
+		plt.show()
+
+    #	
+else:
+#---	# VII-1B. dz manually constructed
 	# this looks like it would work out, with rounder numbers:
 	dzs_soil = [0.05, 0.05, 0.05, 0.12, 0.23, 0.5, 0.5, 0.5]
 	print(sum(dzs_soil))

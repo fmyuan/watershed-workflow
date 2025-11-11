@@ -2,31 +2,20 @@
 import os
 import numpy as np
 from netCDF4 import Dataset
-from cmath import nan, inf
-from pyproj import Transformer
-from pyproj import CRS
-
-import watershed_workflow.elm_gridlocater
-
-try:
-    from mpi4py import MPI
-    HAS_MPI4PY=True
-except ImportError:
-    HAS_MPI4PY=False
 
 #---
 # 
-def mksrfdata_updatevals(fsurfnc_in, user_srf_data={}, user_srfnc_file='', user_srf_vars='', OriginPFTclass=True):
+def mksrfdata_updatevals(fsurfnc_in, fsurfnc_out=None, \
+                         user_srf_data={}, user_srfnc_file=None, user_srf_vars=None, OriginPFTclass=True):
     
     print('#--------------------------------------------------#')
     print("Replacing values in surface data by merging user-provided dataset")
-    fsurfnc_out ='./'+fsurfnc_in.split('/')[-1]+'-merged'
+    if fsurfnc_out==None: fsurfnc_out ='./'+fsurfnc_in.split('/')[-1]+'-merged'
     
     
-    #--------------------------------------
+    #---------------------------------------------------------------------------------------
     #
-    # PFT classes in B. Sulman et al (2021) paper: 12 arctic PFTs + 2 additional tree PFTs
-    
+    # Arctic PFT classes in B. Sulman et al (2021) paper: 12 arctic PFTs + 2 additional tree PFTs   
     user_pfts={'pftname':[
                     "non_vegetated",
                     "arctic_lichen",
@@ -56,23 +45,33 @@ def mksrfdata_updatevals(fsurfnc_in, user_srf_data={}, user_srfnc_file='', user_
     else:
         natpft = np.asarray(range(max(user_pfts['pftnum'])+1)) # this is the real arcticpft order number 
  
-    #--------------------------------------
+    #---------------------------------------------------------------------------------------
+
     UNSTRUCTURED = False    
-    if not user_srfnc_file !='':
+    if not user_srfnc_file==None:
         print('read data from: ', user_srfnc_file)
         f=Dataset(user_srfnc_file)
         if 'gridcell' in f.dimensions.items(): UNSTRUCTURED = True
+        
+        user_srf = {}
+        user_srf['LATIXY'] = f.variables['LATIXY']
+        
+        if user_srf_vars==None:
+            user_vname = user_srf_vars.keys()
+        else:
+            user_vname = user_srf_vars.split(',')
+        for v in user_vname:
+            if v in f.variables.keys(): user_srf[v] =f.variables[v][...] 
     elif not len(user_srf_data)<=0:
-        if len(np.squeeze(user_srf_data['LATIXY']).shape())==1:
-            UNSTRUCTURED = True
-            
-        if user_srf_vars=='':
+        if len(np.squeeze(user_srf_data['LATIXY']).shape)==1:
+            UNSTRUCTURED = True            
+        if user_srf_vars==None:
             user_vname = user_srf_vars.keys()
         else:
             user_vname = user_srf_vars.split(',')
         user_srf = user_srf_data
         
-    #--------------------------------------
+    #---------------------------------------------------------------------------------------
     #                    
     # write into nc file
     with Dataset(fsurfnc_in,'r') as src, Dataset(fsurfnc_out, "w") as dst:
@@ -82,11 +81,11 @@ def mksrfdata_updatevals(fsurfnc_in, user_srf_data={}, user_srfnc_file='', user_
             if dname == 'natpft':
                 len_dimension = len(natpft)            # dim length from new data
             elif dname == 'gridcell':
-                len_dimension = user_srf['LATIXY'].flatten().size()
+                len_dimension = user_srf['LATIXY'].flatten().size
             elif dname in ['lsmlat','lat']:
-                len_dimension = user_srf['LATIXY'].shape()[0]
+                len_dimension = user_srf['LATIXY'].shape[0]
             elif dname in ['lsmlon', 'lon']:
-                len_dimension = user_srf['LONGXY'].shape()[1]                
+                len_dimension = user_srf['LONGXY'].shape[1]                
             else:
                 len_dimension = len(dimension)
             dst.createDimension(dname, len_dimension if not dimension.isunlimited() else None)
@@ -115,7 +114,7 @@ def mksrfdata_updatevals(fsurfnc_in, user_srf_data={}, user_srfnc_file='', user_
 
             # dimension length may change, so need to 
             if vname in user_vname:
-                varvals = src[vname][...]
+                varvals = user_srf[vname][...]
                 #
             else:
                 varvals = src[vname][...]
@@ -133,18 +132,14 @@ def mksrfdata_updatevals(fsurfnc_in, user_srf_data={}, user_srfnc_file='', user_
 #
 
 #--------------------------------------------------------------------
-def test():
-
-    """
-    args = sys.argv[1:]
-    input_path = args[0]
-    output_path = args[1]
-    """  
+def test(surf_from_atsm2={}, surf_vars=''):
     input_path  = './'
     output_path = './'
     
-    mksrfdata_updatevals('./surfdata_0.5x0.5_simyr1850_c240308_TOP.nc', \
-                         user_srf_data=surf_from_atsm2, user_srf_vars='', OriginPFTclass=False)
+    mksrfdata_updatevals(os.path.joint((input_path, \
+                         'surfdata_2687x1pt_simyr1850_c240308_TOP-coweeta.nc')), \
+                         user_srf_data=surf_from_atsm2, \
+                         user_srf_vars=surf_vars)
     
       
 #if __name__ == '__main__':
