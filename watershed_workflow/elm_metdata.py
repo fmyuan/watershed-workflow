@@ -1,6 +1,7 @@
 
 import sys
 from datetime import datetime
+import glob
 import numpy as np
 from netCDF4 import Dataset
 
@@ -11,7 +12,9 @@ def elm_metdata_write(options, metdata, time_dim=0):
     """
     options.*
             "met_idir, default="./", \
-                E3SM met data directory for template files to look up
+                help = "E3SM met data directory for template files to look up")
+            "met_odir, default="./", \
+                help = "output data directory" )
             "nc_create", default=False, \
                 help = "output new nc file", action="store_true")
             "nc_write", default=False, \
@@ -44,7 +47,6 @@ def elm_metdata_write(options, metdata, time_dim=0):
     
     """
    
-
     if('site' in options.nc_write_mettype.lower() \
        or 'cplbypass_site' in options.nc_write_mettype.lower()): 
         vnames=['LONGXY','LATIXY','EDGEE','EDGEW','EDGEN','EDGES','time', \
@@ -106,6 +108,11 @@ def elm_metdata_write(options, metdata, time_dim=0):
         ncfilein_cplbypass = ''; ncfilein_cplbypass_prv = ''
         metidir = options.met_idir
         if metidir=='': metidir='./'
+        if not metidir.endswith('/'): metidir = metidir+'/'
+
+        metodir = options.met_odir
+        if metodir=='': metodir='./'
+        if not metodir.endswith('/'): metodir = metodir+'/'
         
         for varname in vnames:
             if varname in ['LONGXY','LATIXY','EDGEE','EDGEW','EDGEN','EDGES','time']: continue  #skip and always write if new output nc file
@@ -219,7 +226,7 @@ def elm_metdata_write(options, metdata, time_dim=0):
                     tname = 'time'
                     for iyr in range(int(np.min(metdata['YEAR'])), int(np.max(metdata['YEAR']))+1):
                         for imon in range(1,13):
-                            ncfileout = str(iyr)+'-'+str(imon).zfill(2)+'.nc'
+                            ncfileout = metodir+str(iyr)+'-'+str(imon).zfill(2)+'.nc'
                             
                             if not TIME0_AS_CURRENT:
                                 tidx = np.argwhere((metdata['YEAR']==iyr) & 
@@ -298,16 +305,18 @@ def elm_metdata_write(options, metdata, time_dim=0):
                    'crujra' in met_type.lower() or \
                    'ERA5' in met_type or \
                    'ATS-subdaily' in met_type: 
+                    
                     if 'site' in met_type.lower():
-                        ncfileout_cplbypass='all_hourly.nc'
+                        ncfileout_cplbypass=metodir+'all_hourly.nc'
                     elif 'gswp3' in met_type.lower() or \
                          'crujra' in met_type.lower() or \
-                         'era5' in met_type.lower():
-                        ncfileout_cplbypass=ncfilein_cplbypass.split('/')[-1]
+                         'era5' in met_type.lower() or \
+                         'ATS-subdaily' in met_type: 
+                        ncfileout_cplbypass=metodir+ncfilein_cplbypass.split('/')[-1]
                         if 'daymet' in met_type.lower():
                             ncfileout_cplbypass=ncfileout_cplbypass.replace('1901', '1980')
                     else:
-                        print('currently only support 3 types of cpl_bypass: Site or GSWP3* or CRUJRA or ERA5* or ATS-subdaily')
+                        print('currently only support types of cpl_bypass: Site or GSWP3* or CRUJRA or ERA5* or ATS-subdaily')
                         sys.exit(-1)
                         
                     tname = 'DTIME'
@@ -380,7 +389,7 @@ def elm_metdata_write(options, metdata, time_dim=0):
                         
                         error=putvar(ncfileout_cplbypass,['LONGXY'], metdata['LONGXY'])
                         error=putvar(ncfileout_cplbypass,['LATIXY'], metdata['LATIXY'])
-                        if 'site' in met_type.lower() or 'ATS-subdaily' in met_type:
+                        if 'site' in met_type.lower():
                             error=putvar(ncfileout_cplbypass,['start_year'], np.floor(t[0]/365.0)+1)
                             error=putvar(ncfileout_cplbypass,['end_year'], np.floor(t[-1]/365.0)+1)
 
@@ -389,7 +398,7 @@ def elm_metdata_write(options, metdata, time_dim=0):
                             lon = metdata['LONGXY']
                             lat = metdata['LATIXY']
                             g_zno = 1
-                            f = open('./zone_mappings.txt', 'w')
+                            f = open(metodir+'zone_mappings.txt', 'w')
                             for ig in range(len(lon)):
                                 f.write('%12.5f ' % lon[ig] )
                                 f.write('%12.6f ' % lat[ig] )
@@ -397,6 +406,10 @@ def elm_metdata_write(options, metdata, time_dim=0):
                                 f.write('%5d ' % (ig+1) )
                                 f.write('\n')
                             f.close()
+                            
+                            if 'ATS-subdaily' in met_type:
+                                error=putvar(ncfileout_cplbypass,['start_year'], np.floor(t[0]/365.0)+1)
+                                error=putvar(ncfileout_cplbypass,['end_year'], np.floor(t[-1]/365.0)+1)
 
 
                                             
@@ -455,6 +468,7 @@ def elm_metdata_write(options, metdata, time_dim=0):
                 sys.exit(-1)
         # for varname in vnames
     
+    # if options.nc_create or options.nc_write
     print('DONE!')
     
     return 0

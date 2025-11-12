@@ -86,7 +86,7 @@ import watershed_workflow.sources.standard_names as names
 import watershed_workflow.elm_domain as elm_domain
 import watershed_workflow.elm_mksrfdata as elm_mksrfdata
 from types import SimpleNamespace
-import watershed_workflow.elm_metdata.elm_metdata_write as elm_metdata_write
+import watershed_workflow.elm_metdata as elm_metdata
 
 
 import ats_input_spec
@@ -1072,14 +1072,43 @@ if ELM_SOILCOLUMN:
 			'ZBOT','TBOT', 'PRECTmms', 'QBOT', 'FSDS', 'FLDS', 'PSRF', 'WIND']
 
 	elmmet={}
-
-	# save in ELM forcing data format    
+	met_noleap = watershed_workflow.data.filterLeapDay(met_data_raw)
+	
+	y = met_noleap['latitude'].to_numpy()
+	x = met_noleap['longitude'].to_numpy()
+	elmmet['LONGXY'] = np.meshgrid(x,y)[1].flatten() # 2D -> 1D
+	elmmet['LATIXY'] = np.meshgrid(x,y)[0].flatten() # 2D -> 1D
+	
+	#
+	t = met_noleap['time'].to_numpy()
+	t_yr0 = t[0].year
+	t_unit = "days since "+str(t_yr0)+"-01-01 00:00:00" 
+	t_dsyr0 = cftime.date2num(t, t_unit, calendar='noleap')
+	elmmet['time'] = t_dsyr0
+	elmmet['tunit'] = t_unit
+	
+	elmmet['TBOT'] = np.reshape(met_noleap['TMP_2maboveground'].to_numpy(),(t.size,x.size*y.size))
+	elmmet['QBOT'] = np.reshape(met_noleap['SPFH_2maboveground'].to_numpy(),(t.size,x.size*y.size))
+	elmmet['PRECTmms'] = np.reshape(met_noleap['APCP_surface'].to_numpy()/3600.0,(t.size,x.size*y.size))  # kg/m2/hour --> mm/s
+	elmmet['FSDS'] = np.reshape(met_noleap['DSWRF_surface'].to_numpy(),(t.size,x.size*y.size))
+	elmmet['FLDS'] = np.reshape(met_noleap['DLWRF_surface'].to_numpy(),(t.size,x.size*y.size))
+	elmmet['PSRF'] = np.reshape(met_noleap['PRES_surface'].to_numpy(),(t.size,x.size*y.size))
+	uw = np.reshape(met_noleap['UGRD_10maboveground'].to_numpy(),(t.size,x.size*y.size))
+	uv = np.reshape(met_noleap['VGRD_10maboveground'].to_numpy(),(t.size,x.size*y.size)) 
+	elmmet['WIND'] = np.sqrt(uw*uw + uv*uv)
+	
+	# save in ELM forcing data format
+	#met_odir = data_dir+'/meteorology/cpl_bypass_full/'
+	met_odir = toOutput(f'cpl_bypass_full/')
+	output_filenames['meteorology_for_elm_dir'] = met_odir
+	os.makedirs(met_odir, exist_ok=True)
 	options_wrt = SimpleNamespace( \
-            met_idir = datadir+'/cpl_bypass_template/', \
+            met_idir = data_dir+'/cpl_bypass_template/', \
+            met_odir = met_odir, \
             nc_create = True, \
-            nc_write = True, \
+            nc_write = False, \
             nc_write_mettype = 'ATS-subdaily_cplbypass' )
-	elm_metdata_write(options_wrt, elmmet)
+	elm_metdata.elm_metdata_write(options_wrt, elmmet)
 
 #
 
