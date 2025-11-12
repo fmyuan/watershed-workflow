@@ -28,7 +28,12 @@
 		- {myNAME}_steadystate.xml the steady-state solution based on uniform application of mean rainfall rate
 		- {myNAME}_cyclic_steadystate.xml the cyclic steady state based on typical years
 		- {myNAME}_transient.xml the forward model, run from 2010 -- 2011
-
+	
+	ELM Input files:
+		- domain.lnd.Nx1pt.{myNAME}.nc
+		- surfdata_Nx1pt_simyr1850-{myNAME}.nc
+		- landuse_timeseries_Nx1pt_hist_simyr1850-2015-{myNAME}.nc
+		- ./cpl_bypass_full/ATS-subdaily_{TBOT/QBOT/PRECTmms/PSRF/FSDS/FLDS/WIND}_z01.nc
 """
 
 #########################################################################################################
@@ -197,8 +202,8 @@ refine_A1 = refine_L1**2 / 2
 # Simulation control
 # - note that we use the NoLeap calendar, same as DayMet.  Simulations are typically run over the "water year"
 #   which starts August 1.
-start = cftime.DatetimeNoLeap(2010,8,1)
-end = cftime.DatetimeNoLeap(2011,8,1)
+start = cftime.DatetimeNoLeap(2010,1,1)
+end = cftime.DatetimeNoLeap(2012,1,1)
 
 nyears_cyclic_steadystate = 4   # how many years to run spinup
 
