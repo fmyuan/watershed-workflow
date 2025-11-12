@@ -81,8 +81,13 @@ import watershed_workflow.resampling
 import watershed_workflow.condition
 import watershed_workflow.io
 import watershed_workflow.sources.standard_names as names
+
+#
 import watershed_workflow.elm_domain as elm_domain
 import watershed_workflow.elm_mksrfdata as elm_mksrfdata
+from types import SimpleNamespace
+import watershed_workflow.elm_metdata.elm_metdata_write as elm_metdata_write
+
 
 import ats_input_spec
 import ats_input_spec.public
@@ -1062,8 +1067,23 @@ logging.info(f'Mean precip value = {precip_mean}')
 
 #--- #------ VIII-2. hourly dataset generation as ELM-ready format
 if ELM_SOILCOLUMN:
-	#
-	print()
+	# standard ELM met. variables
+	elmvnames=['LONGXY','LATIXY','time', 'start_year', 'end_year', \
+			'ZBOT','TBOT', 'PRECTmms', 'QBOT', 'FSDS', 'FLDS', 'PSRF', 'WIND']
+
+	elmmet={}
+
+	# save in ELM forcing data format    
+	options_wrt = SimpleNamespace( \
+            met_idir = datadir+'/cpl_bypass_template/', \
+            nc_create = True, \
+            nc_write = True, \
+            nc_write_mettype = 'ATS-subdaily_cplbypass' )
+	elm_metdata_write(options_wrt, elmmet)
+
+#
+
+
 
 #########################################################################################################
 
