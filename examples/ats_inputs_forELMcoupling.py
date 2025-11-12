@@ -967,6 +967,8 @@ m3.writeExodus(output_filenames['mesh'])
 
 #--- #------ VIII. Meteorological forcing dataset -----#
 
+#--- #------ VIII-1. ATS-ready formats
+
 # download the data -- note it is hourly!
 met_data_raw = sources['meteorology'].getDataset(watershed.exterior, crs, start_leap, end_leap)
 
@@ -1057,6 +1059,11 @@ watershed_workflow.io.writeDatasetToHDF5(
 precip_mean = (met_data_transient['precipitation rain [m s^-1]'].data + met_data_transient['precipitation snow [m SWE s^-1]'].data).mean()
 logging.info(f'Mean precip value = {precip_mean}')
 
+
+#--- #------ VIII-2. hourly dataset generation as ELM-ready format
+if ELM_SOILCOLUMN:
+	#
+	print()
 
 #########################################################################################################
 
