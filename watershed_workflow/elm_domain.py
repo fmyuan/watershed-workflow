@@ -6,6 +6,12 @@ import os
 import math
 import netCDF4 as nc
 import numpy as np
+
+DIN_LOC_ROOT = None
+def set_e3sm_input(path):
+    """Sets the root path to search for E3SM input data"""
+    global DIN_LOC_ROOT
+    DIN_LOC_ROOT = path
     
 def elm_arcradians2_from_km2(area_km2, R_meters=6.37122e6):
     one_over_re2 = 1.0e6/R_meters/R_meters
@@ -862,9 +868,11 @@ def ncdata_subsetbynpwhereindex(npwhere_indices, npwhere_mask=np.empty((0,0)), n
                 
         
         print('subsetting done successfully!')
+        return ncfileout
         
     else:
         print('NO subsetting done due to indices NOT provided!')
+        return None
     #
 #
 #--------------------------------------------------------------------------------------------------------
@@ -872,7 +880,11 @@ def ncdata_subsetbynpwhereindex(npwhere_indices, npwhere_mask=np.empty((0,0)), n
     
 #--------------------------------------------------------------------------------------------------------
   
-def test(e3sm_inputdata_root='./'):
+def refine_surfdata(outdir='./', \
+                    lnd_domain_file='../domain.lnd.r05_RRSwISC6to18E3r5.240328.nc', \
+                    fsurdat='surfdata_0.5x0.5_simyr1850_c240308_TOP.nc', \
+                    flanduse_timeseries='landuse.timeseries_0.5x0.5_hist_simyr1850-2015_c240308.nc', \
+                    userdomain='./domain.lnd.2687x1pt.coweeta.nc'):
 
     import glob
     try:
@@ -881,25 +893,27 @@ def test(e3sm_inputdata_root='./'):
     except ImportError:
         HAS_MPI4PY=False
 
+    #inputs
+    e3sm_inputdata_root = DIN_LOC_ROOT
     if not e3sm_inputdata_root.endswith('/'):
         e3sm_inputdata_root=e3sm_inputdata_root+'/'
-    # the following is a path+file_header, so that could be batch-run with multiple files
-    input_path= os.path.join(e3sm_inputdata_root, \
-                            'lnd/clm2/surfdata_map', \
-                            'landuse.timeseries_0.5x0.5_hist_simyr1850-2015_c240308-all')
-                            #'surfdata_0.5x0.5_simyr1850_c240308_TOP-all')
-    inputdomain_ncfile = os.path.join(e3sm_inputdata_root, \
-                            'share/domains', \
-                            'domain.lnd.r05_RRSwISC6to18E3r5.240328.nc')
+    fsurdat_path= os.path.join(e3sm_inputdata_root, \
+                            'lnd/clm2/surfdata_map')                         
+    lnd_domain_pathfile = os.path.join(e3sm_inputdata_root, \
+                            'share/domains/domain.clm', \
+                            lnd_domain_file)
     
+    #outputs
     output_path = './'
     SUBDOMAIN_REORDER = True  # True: masked file re-ordered by userdomain below, otherwise only mask and trunck
     KEEP_DUPLICATED = True
     
     # a domain.nc to aim to generate a new domain and surfdata
-    userdomain = './domain.lnd.2687x1pt.coweeta.nc'
-    km2perpt = [] # user-grid area in km^2
-    lats=[]; lons=[]
+    # userdomain = './domain.lnd.2687x1pt.coweeta.nc'
+    # user-grid area in km^2
+    km2perpt = [] 
+    lats=[]
+    lons=[]
     #userdomain = './zone_mappings.txt' # OR, using a lat/lon paired pt list.
     #km2perpt = 1.0 # user-grid area in km^2
     # e.g. 
@@ -929,7 +943,7 @@ def test(e3sm_inputdata_root='./'):
     if userdomain.endswith('.nc'):
         idx_box, newmask_box, newfrac_box, newxc_box, newyc_box, newkm2_box = \
             domain_subsetbymaskncf( \
-            srcdomain_pathfile=inputdomain_ncfile, \
+            srcdomain_pathfile=lnd_domain_pathfile, \
             maskncf=userdomain, masknc_area=np.empty((0,0)), maskncv='', \
             reorder_src=SUBDOMAIN_REORDER, \
             keep_duplicated=KEEP_DUPLICATED, \
@@ -946,42 +960,14 @@ def test(e3sm_inputdata_root='./'):
         # in this case, only lat/lon paired points are provided.
         newkm2_box = np.empty((0,0))
 
-    # run with srun
-
-    # all source nc files to be subset
-    if input_path.endswith('.nc'):
-        allncfiles = sorted(glob.glob("%s*.%s" % (input_path)))
-    else:
-        allncfiles = sorted(glob.glob("%s*.%s" % (input_path,'nc')))
-    if HAS_MPI4PY:
-        mycomm = MPI.COMM_WORLD
-        myrank = mycomm.Get_rank()
-        mysize = mycomm.Get_size()
+    #
+    allncfiles = [os.path.join(fsurdat_path,fsurdat)]
+    if flanduse_timeseries!=None: 
+        allncfiles.append(os.path.join(fsurdat_path,flanduse_timeseries))
+    allncout = []
+    for ncfile in allncfiles:
+        if ncfile=='': continue
         
-        len_total = len(allncfiles)
-        len_myrank = int(math.floor(len_total/mysize))
-        len_mod = int(math.fmod(len_total,mysize))
-
-        n_myrank = np.full([mysize], int(1)); n_myrank = np.cumsum(n_myrank)*len_myrank
-        x_myrank = np.full([mysize], int(0))
-        if(len_mod>0): x_myrank[:len_mod] = 1
-        n_myrank = n_myrank + np.cumsum(x_myrank) - 1        # ending index, starting 0, for each rank
-        n0_myrank = np.hstack((0, n_myrank[0:mysize-1]+1))   # starting index, starting 0, for each rank
-    
-        #print('on ',myrank, 'indx: ',len_total, n0_myrank[myrank], n_myrank[myrank], \
-        #        allncfiles[n0_myrank[myrank]],allncfiles[n_myrank[myrank]])
-        allncfiles_byrank = allncfiles[n0_myrank[myrank]:n_myrank[myrank]+1] # [n0:n] IS not inclusive of [n]
-    
-    else:
-        mycomm = 0
-        myrank = 0
-        mysize = 1
-        allncfiles_byrank = allncfiles
-    
-    # subsetting other datasets
-    # (TODO) shall exclude those sources of grid-system NOT consistent with source-domain
-    if (myrank>=mysize-3): print(allncfiles_byrank[0], allncfiles_byrank[-1], 'ON: ', myrank)
-    for ncfile in allncfiles_byrank:
         ncfile_dims = ['lsmlat', 'lsmlon']
         dims_new =''
         
@@ -1005,15 +991,23 @@ def test(e3sm_inputdata_root='./'):
             return
         srfnc.close()
 
-        ncdata_subsetbynpwhereindex(idx_box, npwhere_mask=newmask_box, npwhere_frac=newfrac_box, \
+        fout = ncdata_subsetbynpwhereindex(idx_box, npwhere_mask=newmask_box, npwhere_frac=newfrac_box, \
                                     newxc_box=newxc_box, newyc_box=newyc_box, newkm2_box=newkm2_box, \
                                     reordered_box=SUBDOMAIN_REORDER, \
                                     srcnc_pathfile=ncfile, \
                                     indx_dim=ncfile_dims, indx_dim_flatten=dims_new)
 
         #
-
+        if outdir!='./': os.rename(fout, os.path.join(outdir,fout))
+        allncout.append(os.path.join(outdir,fout))
     
-#if __name__ == '__main__':
-#    test()
+    # output files
+    return allncout
+    
+'''    
+if __name__ == '__main__':
+    set_e3sm_input('/Users/f9y/e3sm_inputdata')
+    allout = refine_surfdata(userdomain='./domain.lnd.2683x1pt_US-coweeta.nc')
+    print(allout)
 #    zisois, dzsois, zsoil =  soilcolumn(more_vertlayers=True, nlevgrnd=15)   
+'''

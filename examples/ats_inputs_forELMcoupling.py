@@ -72,7 +72,6 @@ sys.path.append('/Users/f9y/micromamba/amanzi-ats-tools/amanzi_xml')
 os.environ['AMANZI_SRC_DIR']='/Users/f9y/mygithub/ATS_REPOS/amanzi'
 os.environ['ATS_SRC_DIR']='/Users/f9y/mygithub/ATS_REPOS/amanzi/src/physics/ats'
 
-
 import watershed_workflow 
 import watershed_workflow.config
 import watershed_workflow.sources
@@ -87,13 +86,6 @@ import watershed_workflow.condition
 import watershed_workflow.io
 import watershed_workflow.sources.standard_names as names
 
-#
-import watershed_workflow.elm_domain as elm_domain
-import watershed_workflow.elm_mksrfdata as elm_mksrfdata
-from types import SimpleNamespace
-import watershed_workflow.elm_metdata as elm_metdata
-
-
 import ats_input_spec
 import ats_input_spec.public
 import ats_input_spec.io
@@ -101,6 +93,25 @@ import ats_input_spec.io
 import amanzi_xml.utils.io as aio
 import amanzi_xml.utils.search as asearch
 import amanzi_xml.utils.errors as aerrors
+
+#
+#-------------------------------------------------------------------------------------
+#--- options for using ELM soil column layer structure
+ELM_SOILCOLUMN=True
+# by default, ELM soil layer number is 15. If  option true, it's 30
+# and ELM namelist flag: more_vertlayers = .true.
+MORE_VERTLAYERS=False
+if ELM_SOILCOLUMN:
+	import watershed_workflow.elm_domain as elm_domain
+	import watershed_workflow.elm_mksrfdata as elm_mksrfdata
+	from types import SimpleNamespace
+	import watershed_workflow.elm_metdata as elm_metdata
+	# e3sm has a xml file, in which by machine-name, DIN_LOC_ROOT is pre-defined.
+	# (TODO this locally or from data server)
+	elm_domain.set_e3sm_input('/Users/f9y/e3sm_inputdata')
+#-------------------------------------------------------------------------------------
+
+
 
 # set the default figure size for notebooks
 plt.rcParams["figure.figsize"] = (8, 6)
@@ -154,12 +165,6 @@ else:
 #--- A few user defined options
 # name of watershed or whatever for your cases
 myname = 'coweeta'
-
-#--- options for using ELM soil column layer structure
-ELM_SOILCOLUMN=True
-# by default, ELM soil layer number is 15. If  option true, it's 30
-# and ELM namelist flag: more_vertlayers = .true.
-MORE_VERTLAYERS=False
 
 # Note, this directory is where downloaded data will be put as well
 data_dir = os.path.join(*(cwd + ['input_data',]))
@@ -789,6 +794,7 @@ if ELM_SOILCOLUMN:
 	elmdomain = {}
 	
 	ngrid = m2.num_cells
+	print('ELM surf domain grid number: ', ngrid)
 	m2_crs = str(m2.crs)
 	if m2.crs.is_projected:
 		# need to transform proj to lat/lon
@@ -836,7 +842,7 @@ if ELM_SOILCOLUMN:
 	
 	elmdomain['crs']=m2.crs
 	
-	ncf_domain = 'domain.lnd.'+str(ngrid)+'x1pt.'+myname+'.nc'
+	ncf_domain = 'domain.lnd.'+str(ngrid)+'x1pt_'+myname+'.nc'
 	output_filenames['elmdomain'] = toOutput(f'{ncf_domain}')
 	try:
 		os.remove(output_filenames['elmdomain'])
@@ -846,13 +852,27 @@ if ELM_SOILCOLUMN:
 	elm_domain.domain_ncwrite(elmdomain, WRITE2D=False, ncfile=output_filenames['elmdomain'], coord_system=False)
 
 #---	# VII-1A(2). extracting and re-distributing ELM surfdata*.nc, according to new domain.nc
-	# (CAN do offline, will move in)
-	ncf0 = 'surfdata_0.5x0.5_simyr1850_c240308_TOP.nc' # this will be from E3SM inputdata server or local
+	# (CAN do offline)
+	ncsrf0 = 'surfdata_0.5x0.5_simyr1850_c240308_TOP.nc' # this will be from E3SM inputdata server or local
+	ncflu0 = None
+	#ncflu0 = 'landuse.timeseries_0.5x0.5_hist_simyr1850-2015_c240308.nc'
+	
+	allsurf = elm_domain.refine_surfdata(outdir=work_dir, \
+                    lnd_domain_file='../domain.lnd.r05_RRSwISC6to18E3r5.240328.nc', \
+                    fsurdat=ncsrf0, \
+                    flanduse_timeseries=ncflu0, \
+                    userdomain=output_filenames['elmdomain'])
 	
 #---	# VII-1A(3). updating ELM surfdata*.nc, unstructureed, from m2 surface cell_data, if any
-	ncfin = 'surfdata_0.5x0.5_simyr1850_c240308_TOP-'+myname+'.nc'
-	ncf_surf = 'surfdata_'+str(ngrid)+'x1pt_simyr1850-'+myname+'.nc'
+	ncfin = allsurf[0]
+	ncf_surf = 'surfdata_'+str(ngrid)+'x1pt_simyr1850_'+myname+'.nc'
 	output_filenames['elmsurfdata'] = toOutput(f'{ncf_surf}')
+	
+	if ncflu0 != None:
+		ncfin1 = allsurf[1]
+		ncf_surf1 = 'landuse.timeseries_'+str(ngrid)+'x1pt_hist_simyr1850-2015_'+myname+'.nc'
+		output_filenames['elmlutimeseries'] = toOutput(f'{ncf_surf1}')
+		
 	
 	surf_from_atsm2 = {}
 	surf_from_atsm2['LATIXY'] = elmdomain['yc']
@@ -862,7 +882,7 @@ if ELM_SOILCOLUMN:
 	surf_vars = 'TOPO'
 	surf_from_atsm2['TOPO'] = m2.centroids[:,2]
 		
-	elm_mksrfdata.mksrfdata_updatevals(toOutput(f'{ncfin}'), \
+	elm_mksrfdata.mksrfdata_updatevals(ncfin, \
 						fsurfnc_out=output_filenames['elmsurfdata'], \
 						user_srf_data=surf_from_atsm2, \
 						user_srf_vars=surf_vars)
