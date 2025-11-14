@@ -97,7 +97,7 @@ import amanzi_xml.utils.errors as aerrors
 #
 #-------------------------------------------------------------------------------------
 #--- options for using ELM soil column layer structure
-ELM_SOILCOLUMN=False
+ELM_SOILCOLUMN=True
 # by default, ELM soil layer number is 15. If  option true, it's 30
 # and ELM namelist flag: more_vertlayers = .true.
 MORE_VERTLAYERS=False
@@ -108,7 +108,9 @@ if ELM_SOILCOLUMN:
 	import watershed_workflow.elm_metdata as elm_metdata
 	# e3sm has a xml file, in which by machine-name, DIN_LOC_ROOT is pre-defined.
 	# (TODO this locally or from data server)
-	elm_domain.set_e3sm_input('/Users/f9y/e3sm_inputdata')
+	DIN_LOC_ROOT = '/Users/f9y/e3sm_inputdata'
+	elm_domain.set_e3sm_input(DIN_LOC_ROOT)
+	
 #-------------------------------------------------------------------------------------
 
 
@@ -248,6 +250,9 @@ sources['hydrography'] = watershed_workflow.sources.hydrography_sources['NHDPlus
 #
 # DELETE THIS SECTION for non-mycase runs
 dtb_file = os.path.join(data_dir, 'soil_structure', 'DTB', 'DTB.tif')
+if ELM_SOILCOLUMN:
+	dtb_file = os.path.join(DIN_LOC_ROOT, 'lnd/clm2/surfdata_map','high_res','soildtb_30x30sec_nwh_c220613.tif')
+
 geo_file = os.path.join(data_dir, 'soil_structure', 'GLHYMPS', 'GLHYMPS.shp')
 
 # GLHYMPs is a several-GB download, so we have sliced it and included the slice here
@@ -358,7 +363,13 @@ m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers,
 m2 = m2.partition(16, True)
 
 # get a raster for the elevation map, based on 3DEP
-dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
+#dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
+
+# locally available raster DEM
+dem_raster = os.path.join(data_dir,'ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew.tif') 
+sources['DEM'] = watershed_workflow.sources.ManagerRaster(dem_raster)
+dem = sources['DEM'].getDataset(watershed.exterior.buffer(100), watershed.crs)['band_1']
+m2.cell_data['DEM'] = watershed_workflow.getDatasetOnMesh(m2, dem, method='linear')
 
 #--- provide surface mesh elevations
 watershed_workflow.elevate(m2, dem)
