@@ -82,6 +82,18 @@ def elm_metdata_write(options, metdata, time_dim=0):
         if metdata['DOY'][0] == int(metdata['DOY'][0]):
             # when DOY is exactly an integer, i.e. time is 00:00:00, assuming doy0 or time0 is included as current day
             TIME0_AS_CURRENT = True
+            
+            # truncating the last time data if its time is 00:00:00 
+            # (this causes DOY as next day but only 1 t-data, and if this is last day of year, it will be next year) 
+            if metdata['DOY'][-1] == int(metdata['DOY'][-1]):
+                for v in metdata.keys():
+                    if v not in ['time','YEAR','DOY', \
+                        'ZBOT','TBOT','PRECTmms','RH','QBOT','FSDS', 'FLDS', 'PSRF', 'WIND']:
+                        continue            
+                    if time_dim==0: 
+                        metdata[v]= metdata[v][:-1,...]
+                    else:
+                        metdata[v]= metdata[v][...,:-1]
         
         
     #--------------------------------------------------------------------------------------
@@ -408,8 +420,8 @@ def elm_metdata_write(options, metdata, time_dim=0):
                             f.close()
                             
                             if 'ATS-subdaily' in met_type:
-                                error=putvar(ncfileout_cplbypass,['start_year'], np.floor(t[0]/365.0)+1)
-                                error=putvar(ncfileout_cplbypass,['end_year'], np.floor(t[-1]/365.0)+1)
+                                error=putvar(ncfileout_cplbypass,['start_year'], metdata['YEAR'][0])
+                                error=putvar(ncfileout_cplbypass,['end_year'], metdata['YEAR'][-1])
 
 
                                             
