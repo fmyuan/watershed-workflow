@@ -97,8 +97,8 @@ class ManagerMODISAppEEARS(manager_dataset.ManagerDataset):
     _STATUS_URL = "https://appeears.earthdatacloud.nasa.gov/api/status/"
     _BUNDLE_URL_TEMPLATE = "https://appeears.earthdatacloud.nasa.gov/api/bundle/{0}"
 
-    _START = datetime.date(2002, 7, 1)
-    _END = datetime.date(2021, 1, 1)
+    _START = datetime.date(2002, 8, 1)    # AppEEARS says lai500m product starting from 2002-7-4 to present
+    _END = datetime.date(2025, 8, 1)
 
     _PRODUCTS = {
         'LAI': {
@@ -120,9 +120,9 @@ class ManagerMODISAppEEARS(manager_dataset.ManagerDataset):
         # Native MODIS properties for base class
         import cftime
         native_resolution = 500.0 * 9.e-6 # in native_crs
-        native_start = cftime.datetime(2002, 7, 1, calendar='standard')  
-        native_end = cftime.datetime(2024, 1, 1, calendar='standard')
-        native_crs = CRS.from_epsg(4269)  # WGS84 Geographic
+        native_start = cftime.datetime(2002, 8, 1, calendar='standard')  
+        native_end = cftime.datetime(2025, 8, 1, calendar='standard')
+        native_crs = CRS.from_epsg(4326)  # WGS84 Geographic, if chosing geographic projection in AppEEARS webserver
         valid_variables = ['LAI', 'LULC']
         default_variables = ['LAI', 'LULC']
         
