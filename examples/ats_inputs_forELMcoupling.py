@@ -97,7 +97,7 @@ import amanzi_xml.utils.errors as aerrors
 #
 #-------------------------------------------------------------------------------------
 #--- options for using ELM soil column layer structure
-ELM_SOILCOLUMN=False
+ELM_SOILCOLUMN=True
 # by default, ELM soil layer number is 15. If  option true, it's 30
 # and ELM namelist flag: more_vertlayers = .true.
 MORE_VERTLAYERS=False
@@ -256,6 +256,11 @@ sources['geologic structure'] = watershed_workflow.sources.ManagerGLHYMPS(geo_fi
 # The Pelletier DTB map is not particularly accurate at mycase -- the SoilGrids map seems to be better.
 # Here we will use a clipped version of that map.
 sources['depth to bedrock'] = watershed_workflow.sources.ManagerRaster(dtb_file)
+
+if ELM_SOILCOLUMN:
+	# a modified DTB datasets, in which including less than 2m or so soils
+	dtb_file = os.path.join(DIN_LOC_ROOT, 'lnd/clm2/surfdata_map','high_res','soildtb_30x30sec_nwh_c220613.tif')
+
 
 # END DELETE THIS SECTION
 
@@ -460,7 +465,7 @@ We'll start by downloading and collecting land cover from the NLCD dataset, and 
 """
 
 # download the NLCD raster
-nlcd = sources['land cover'].getDataset(watershed.exterior.buffer(100), watershed.crs)['cover']
+nlcd = sources['land cover'].getDataset(watershed.exterior.buffer(10), watershed.crs)['cover']
 
 # what land cover types did we get?
 logging.info('Found land cover dtypes: {}'.format(nlcd.dtype))
@@ -539,7 +544,7 @@ modis_data['LULC'].plot.imshow()
 
 # compute the transient time series
 modis_lai = watershed_workflow.land_cover_properties.computeTimeSeries(modis_data['LAI'], modis_data['LULC'], 
-                                                                      polygon=watershed.exterior, polygon_crs=watershed.crs)
+                                                        polygon=watershed.exterior.buffer(200), polygon_crs=watershed.crs)
 modis_lai
 
 # smooth the data in time
@@ -665,7 +670,7 @@ plt.show()
 dtb = sources['depth to bedrock'].getDataset(watershed.exterior, watershed.crs)['band_1']
 
 # the SoilGrids dataset is in cm --> convert to meters
-dtb.values = dtb.values/100.
+if not ELM_SOILCOLUMN: dtb.values = dtb.values/100.
 
 # map to the mesh
 m2.cell_data['dtb'] = watershed_workflow.getDatasetOnMesh(m2, dtb, method='linear')

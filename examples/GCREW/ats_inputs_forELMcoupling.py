@@ -108,9 +108,7 @@ if ELM_SOILCOLUMN:
 	import watershed_workflow.elm_metdata as elm_metdata
 	# e3sm has a xml file, in which by machine-name, DIN_LOC_ROOT is pre-defined.
 	# (TODO this locally or from data server)
-	DIN_LOC_ROOT = '/Users/f9y/e3sm_inputdata'
-	elm_domain.set_e3sm_input(DIN_LOC_ROOT)
-	
+	elm_domain.set_e3sm_input('/Users/f9y/e3sm_inputdata')
 #-------------------------------------------------------------------------------------
 
 
@@ -250,9 +248,6 @@ sources['hydrography'] = watershed_workflow.sources.hydrography_sources['NHDPlus
 #
 # DELETE THIS SECTION for non-mycase runs
 dtb_file = os.path.join(data_dir, 'soil_structure', 'DTB', 'DTB.tif')
-if ELM_SOILCOLUMN:
-	dtb_file = os.path.join(DIN_LOC_ROOT, 'lnd/clm2/surfdata_map','high_res','soildtb_30x30sec_nwh_c220613.tif')
-
 geo_file = os.path.join(data_dir, 'soil_structure', 'GLHYMPS', 'GLHYMPS.shp')
 
 # GLHYMPs is a several-GB download, so we have sliced it and included the slice here
@@ -261,6 +256,11 @@ sources['geologic structure'] = watershed_workflow.sources.ManagerGLHYMPS(geo_fi
 # The Pelletier DTB map is not particularly accurate at mycase -- the SoilGrids map seems to be better.
 # Here we will use a clipped version of that map.
 sources['depth to bedrock'] = watershed_workflow.sources.ManagerRaster(dtb_file)
+
+if ELM_SOILCOLUMN:
+	# a modified DTB datasets, in which including less than 2m or so soils
+	dtb_file = os.path.join(DIN_LOC_ROOT, 'lnd/clm2/surfdata_map','high_res','soildtb_30x30sec_nwh_c220613.tif')
+
 
 # END DELETE THIS SECTION
 
@@ -363,13 +363,7 @@ m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers,
 m2 = m2.partition(16, True)
 
 # get a raster for the elevation map, based on 3DEP
-#dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
-
-# locally available raster DEM
-dem_raster = os.path.join(data_dir,'ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew.tif') 
-sources['DEM'] = watershed_workflow.sources.ManagerRaster(dem_raster)
-dem = sources['DEM'].getDataset(watershed.exterior.buffer(100), watershed.crs)['band_1']
-m2.cell_data['DEM'] = watershed_workflow.getDatasetOnMesh(m2, dem, method='linear')
+dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
 
 #--- provide surface mesh elevations
 watershed_workflow.elevate(m2, dem)
@@ -471,7 +465,7 @@ We'll start by downloading and collecting land cover from the NLCD dataset, and 
 """
 
 # download the NLCD raster
-nlcd = sources['land cover'].getDataset(watershed.exterior.buffer(100), watershed.crs)['cover']
+nlcd = sources['land cover'].getDataset(watershed.exterior.buffer(10), watershed.crs)['cover']
 
 # what land cover types did we get?
 logging.info('Found land cover dtypes: {}'.format(nlcd.dtype))
@@ -550,7 +544,7 @@ modis_data['LULC'].plot.imshow()
 
 # compute the transient time series
 modis_lai = watershed_workflow.land_cover_properties.computeTimeSeries(modis_data['LAI'], modis_data['LULC'], 
-                                                                      polygon=watershed.exterior, polygon_crs=watershed.crs)
+                                                        polygon=watershed.exterior.buffer(200), polygon_crs=watershed.crs)
 modis_lai
 
 # smooth the data in time
@@ -676,7 +670,7 @@ plt.show()
 dtb = sources['depth to bedrock'].getDataset(watershed.exterior, watershed.crs)['band_1']
 
 # the SoilGrids dataset is in cm --> convert to meters
-dtb.values = dtb.values/100.
+if not ELM_SOILCOLUMN: dtb.values = dtb.values/100.
 
 # map to the mesh
 m2.cell_data['dtb'] = watershed_workflow.getDatasetOnMesh(m2, dtb, method='linear')
