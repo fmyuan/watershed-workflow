@@ -109,6 +109,7 @@ if ELM_SOILCOLUMN:
 	# e3sm has a xml file, in which by machine-name, DIN_LOC_ROOT is pre-defined.
 	# (TODO this locally or from data server)
 	elm_domain.set_e3sm_input('/Users/f9y/e3sm_inputdata')
+	DIN_LOC_ROOT='/Users/f9y/e3sm_inputdata'
 #-------------------------------------------------------------------------------------
 
 
@@ -248,6 +249,10 @@ sources['hydrography'] = watershed_workflow.sources.hydrography_sources['NHDPlus
 #
 # DELETE THIS SECTION for non-mycase runs
 dtb_file = os.path.join(data_dir, 'soil_structure', 'DTB', 'DTB.tif')
+if ELM_SOILCOLUMN:
+	# a modified DTB datasets, in which including less than 2m or so soils
+	dtb_file = os.path.join(DIN_LOC_ROOT, 'lnd/clm2/surfdata_map','high_res','soildtb_30x30sec_nwh_c220613.tif')
+
 geo_file = os.path.join(data_dir, 'soil_structure', 'GLHYMPS', 'GLHYMPS.shp')
 
 # GLHYMPs is a several-GB download, so we have sliced it and included the slice here
@@ -257,9 +262,6 @@ sources['geologic structure'] = watershed_workflow.sources.ManagerGLHYMPS(geo_fi
 # Here we will use a clipped version of that map.
 sources['depth to bedrock'] = watershed_workflow.sources.ManagerRaster(dtb_file)
 
-if ELM_SOILCOLUMN:
-	# a modified DTB datasets, in which including less than 2m or so soils
-	dtb_file = os.path.join(DIN_LOC_ROOT, 'lnd/clm2/surfdata_map','high_res','soildtb_30x30sec_nwh_c220613.tif')
 
 
 # END DELETE THIS SECTION
@@ -607,7 +609,9 @@ replace_column_nans(nrcs, 'permeability [m^2]', 'Rosetta permeability [m^2]')
 # drop unnecessary columns
 for col in ['Rosetta porosity [-]', 'Rosetta permeability [m^2]', 'bulk density [g/cm^3]', 'total sand pct [%]',
             'total silt pct [%]', 'total clay pct [%]']:
-    nrcs.pop(col)
+	# ELM requires sand and clay (and OM) for calculating thermal-hydraulic properties
+	if ELM_SOILCOLUMN and (col in ['total sand pct [%]', 'total clay pct [%]']): continue
+	nrcs.pop(col)
     
 # drop nans
 nan_mask = nrcs.isna().any(axis=1)
@@ -645,13 +649,15 @@ nrcs.set_index('ATS ID', drop=True, inplace=True)
 soil_color = -np.ones_like(soil_color_mukey)
 soil_thickness = np.nan * np.ones(soil_color.shape, 'd')
 
-for ats_ID, ID, thickness in zip(nrcs.index, nrcs.mukey, nrcs['thickness [m]']):
-    mask = np.where(soil_color_mukey == ID)
-    soil_thickness[mask] = thickness
-    soil_color[mask] = ats_ID
-
-m2.cell_data['soil_color'] = soil_color
-m2.cell_data['soil thickness'] = soil_thickness
+for v in ['thickness [m]','total sand pct [%]', 'total clay pct [%]']:
+	if v not in nrcs.keys(): continue
+	for ats_ID, ID, thickness in zip(nrcs.index, nrcs.mukey, nrcs[v]):
+	    mask = np.where(soil_color_mukey == ID)
+	    soil_thickness[mask] = thickness
+	    if 'soil_color' not in m2.cell_data.keys(): soil_color[mask] = ats_ID
+	
+	if 'soil_color' not in m2.cell_data.keys(): m2.cell_data['soil_color'] = soil_color
+	m2.cell_data[v] = soil_thickness
 
 
 # plot the soil color
@@ -822,7 +828,10 @@ if ELM_SOILCOLUMN:
 	#elmdomain['area'] = np.empty(ngrid)  # need to be in arc-radian^2
 	elmdomain['area_km2'] = np.empty(ngrid)
 	for j in range(ngrid):
-		if river_mask[j]==1.0: continue
+		if river_mask[j]==1.0: #skip river grid, which has 4 vertices
+			elmdomain['xv'][j,:] = np.nan
+			elmdomain['yv'][j,:] = np.nan
+			continue
 		
 		if m2.crs.is_projected:
 			elm_crs = watershed_workflow.crs.latlon_crs
@@ -884,10 +893,48 @@ if ELM_SOILCOLUMN:
 	surf_from_atsm2['LATIXY'] = elmdomain['yc']
 	surf_from_atsm2['LONGXY'] = elmdomain['xc']
 	
-	# elevation -> 'TOPO'
-	surf_vars = 'TOPO'
-	surf_from_atsm2['TOPO'] = m2.centroids[:,2]
-		
+	# surfdata
+	surf_vars = 'TOPO,SOIL_THICKNESS,PCT_SAND,PCT_CLAY,SOM_THICKNESS,ORGANIC'
+	# from ATS
+	surf_from_atsm2['TOPO'] = m2.centroids[:,2]   # elevation
+	surf_from_atsm2['SOIL_THICKNESS'] = m2.cell_data['thickness [m]']
+	surf_from_atsm2['PCT_SAND'] = m2.cell_data['total sand pct [%]'] 
+	surf_from_atsm2['PCT_CLAY'] = m2.cell_data['total clay pct [%]']
+	# from SoilGrids v2.0.1
+	soilgrids_dir = os.path.join(data_dir,'soil_structure','soilgrids')
+	os.makedirs(soilgrids_dir, exist_ok=True)
+	surf_from_atsm2['SOM_THICKNESS'] = [0.05, 0.10, 0.15, 0.3, 0.4, 1.0]
+	xlmt = elmdomain['xv'].flatten()
+	xrange = [np.nanmin(xlmt), np.nanmax(xlmt)]
+	ylmt = elmdomain['yv'].flatten()
+	yrange = [np.nanmin(ylmt), np.nanmax(ylmt)]
+	
+	#soilvars=['ocd','bdod','sand','silt','clay'] #unit: hg/m3-->0.1kg/m3, cg/cm3 -->0.01kg/dm3, %, %, %
+	soilvars=['ocd'] #unit: hg/m3 --> 0.1kg/m3 ORGANIC in ELM, but not sure if in kgC or kgSOM ???
+	horizons = ['0-5cm','5-15cm','15-30cm','30-60cm','60-100cm','100-200cm']   
+	elm_mksrfdata.download_geotiff_soilgrids( \
+			Range_XLONG=xrange, Range_YLATI=yrange, \
+			outputpath=soilgrids_dir, \
+            soilvars=soilvars, \
+            value='mean')
+    
+	#soilgrids_crs = watershed_workflow.crs.from_string('+proj=igh +lat_0=0 +lon_0=0 +datum=WGS84 +units=m +no_defs')
+	vardata = {}
+	for ivar in soilvars:
+		vardata[ivar] = np.empty((ngrid, len(horizons)))
+		for iz in range(len(horizons)):
+			zstr=horizons[iz]
+			svar_horizon_id = ivar+'_'+zstr+'_mean'
+			svar_horizon_value_tif = soilgrids_dir+'/'+svar_horizon_id+'-latlon.tif'
+			svar = watershed_workflow.sources.ManagerRaster(svar_horizon_value_tif)
+			svar2 = svar.getDataset(watershed.exterior, watershed.crs)['band_1']
+			# map to the mesh
+			m2.cell_data[svar_horizon_id] = watershed_workflow.getDatasetOnMesh(m2, svar2, method='linear')
+			vardata[ivar][:,iz] = m2.cell_data[svar_horizon_id].to_numpy()
+
+	#
+	if 'ocd' in vardata.keys() and 'bdod' in vardata.keys():
+		surf_from_atsm2['ORGANIC'] = vardata['ocd']*0.1
 	elm_mksrfdata.mksrfdata_updatevals(ncfin, \
 						fsurfnc_out=output_filenames['elmsurfdata'], \
 						user_srf_data=surf_from_atsm2, \
