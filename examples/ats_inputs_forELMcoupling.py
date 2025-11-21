@@ -365,7 +365,14 @@ m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers,
 m2 = m2.partition(16, True)
 
 # get a raster for the elevation map, based on 3DEP
-dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
+#dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
+
+# locally available raster DEM
+dem_raster = os.path.join(data_dir,'ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew.tif') 
+sources['DEM'] = watershed_workflow.sources.ManagerRaster(dem_raster)
+dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
+m2.cell_data['DEM'] = watershed_workflow.getDatasetOnMesh(m2, dem, method='linear')
+
 
 #--- provide surface mesh elevations
 watershed_workflow.elevate(m2, dem)
@@ -893,13 +900,50 @@ if ELM_SOILCOLUMN:
 	surf_from_atsm2['LATIXY'] = elmdomain['yc']
 	surf_from_atsm2['LONGXY'] = elmdomain['xc']
 	
-	# surfdata
-	surf_vars = 'TOPO,PCT_SAND,PCT_CLAY,ORGANIC'
+	# surfdata to be put into
+	surf_vars = ''
 	nlevsoi = 10
 	
 	# from ATS
+	surf_vars+='TOPO'
 	surf_from_atsm2['TOPO'] = m2.centroids[:,2]   # elevation
-	
+
+	topo_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew_slope.tif')
+	topo = watershed_workflow.sources.ManagerRaster(dem_raster). \
+				getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
+	m2.cell_data['SLOPE'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
+	surf_vars+=',SLOPE'
+	surf_from_atsm2['SLOPE'] = m2.cell_data['SLOPE'].to_numpy()
+
+	topo_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew_aspect.tif')
+	topo = watershed_workflow.sources.ManagerRaster(dem_raster). \
+				getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
+	m2.cell_data['ASPECT'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
+	surf_vars+=',SINSL_SINAS' #sin(SLOPE)*sin(ASPECT) 
+	surf_from_atsm2['SINSL_SINAS'] = np.sin(m2.cell_data['SLOPE'].to_numpy())* \
+									np.sin(m2.cell_data['ASPECT'].to_numpy())
+	surf_vars+=',SINSL_COSAS' #sin(SLOPE)*cos(ASPECT) 
+	surf_from_atsm2['SINSL_COSAS'] = np.sin(m2.cell_data['SLOPE'].to_numpy())* \
+									np.cos(m2.cell_data['ASPECT'].to_numpy())
+
+
+	topo_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew_skyview.tif') 
+	topo = watershed_workflow.sources.ManagerRaster(dem_raster). \
+				getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
+	m2.cell_data['SKYVIEW'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
+	surf_vars+=',SKYVIEW'
+	surf_from_atsm2['SKYVIEW'] = m2.cell_data['SKYVIEW'].to_numpy()
+
+	#
+	#TERRAIN_CONFIG: may be estimated, according to Lee et al. (2011) (Eq. (4)), as following: 
+	# (1+cos(slope))/2-SKYVIEW
+	# Wei-Liang Lee, K.N. Liou, and Alex Hall, 2011. Parameterization of solar fluxes over mountain surfaces for application to climate models. JGR,116, D01101
+	m2.cell_data['TERRAIN_CONFIG'] = \
+		(1.0+np.cos(m2.cell_data['SLOPE'].to_numpy()))/2.0 \
+		- m2.cell_data['SKYVIEW'].to_numpy()
+	surf_vars+=',TERRAIN_CONFIG'
+	surf_from_atsm2['TERRAIN_CONFIG'] = m2.cell_data['TERRAIN_CONFIG'].to_numpy()
+ 
 	# looks like ATS not really have layered properties of soil
 	# to be consistent, ELM should be in a similar way
 	znodes = m2.cell_data['thickness [m]'].to_numpy()
@@ -910,6 +954,7 @@ if ELM_SOILCOLUMN:
 			elm_mksrfdata.mksrfdata_soilcolumn_interp( \
 						srf_soildata=zdata[ig], \
 						srf_soilnode=znodes[ig])
+	surf_vars+=',PCT_SAND'
 	surf_from_atsm2['PCT_SAND'] = temp_data 
 	
 	zdata = m2.cell_data['total clay pct [%]'].to_numpy()
@@ -920,6 +965,7 @@ if ELM_SOILCOLUMN:
 						srf_soildata=zdata[ig], \
 						srf_soilnode=znodes[ig], \
 						nlevsoi = nlevsoi)
+	surf_vars+=',PCT_CLAY'
 	surf_from_atsm2['PCT_CLAY'] = temp_data
 
 	
@@ -962,12 +1008,14 @@ if ELM_SOILCOLUMN:
 				elm_mksrfdata.mksrfdata_soilcolumn_interp( \
 						srf_soildata=zdata, \
 						srf_soilnode=znodes, \
-						nlevsoi=nlevsoi)
-			
-	#
+						nlevsoi=nlevsoi)			
 	if 'ocd' in vardata.keys():
+		surf_vars+=',ORGANIC'
 		surf_from_atsm2['ORGANIC'] = vardata['ocd']*0.1 #but not sure if 'ocd' in kgC or kgSOM ???
 	
+	#
+	# write all in 'surf_vars' to surfdata.nc
+	print('usr-provided varables: ', surf_vars)
 	elm_mksrfdata.mksrfdata_updatevals(ncfin, \
 						fsurfnc_out=output_filenames['elmsurfdata'], \
 						user_srf_data=surf_from_atsm2, \
