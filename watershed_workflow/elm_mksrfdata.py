@@ -5,11 +5,9 @@ from netCDF4 import Dataset
 from pyproj import Transformer
 from pyproj import CRS
 
-#import geopandas as gpd
-#import rioxarray
+import xarray as xr
 import rasterio
 from rasterio.transform import Affine
-
 
 #--- # downloading a boxed SoilGrid data (v2.0.1)
 # 
@@ -93,6 +91,42 @@ def download_geotiff_soilgrids(Range_XLONG=[], Range_YLATI=[], outputpath='./ori
         # layer loop
     #variable loop
     
+
+#--- #
+# interplating layered soil data to match with ELM soil vertical structure
+def mksrfdata_soilcolumn_interp(srf_soildata=np.empty((0)), srf_soilnode=np.empty((0)), nlevsoi=10):
+    
+    from watershed_workflow.elm_domain import soilcolumn
+    
+    if srf_soildata.size!= srf_soilnode.size \
+        or srf_soildata.size<=0: return np.empty((0))
+    
+    # default ELM soil column
+    zisoi, dzsoi, zsoi = soilcolumn()
+    # by default, ELM soil layer no  is 10, the rest 5 layers are as rock or alike 
+    zisoi = zisoi[0:nlevsoi+1]  
+    dzsoi = dzsoi[1:nlevsoi+1]
+    zsoi = zsoi[1:nlevsoi+1]  # so-called node-depth, within a soil layer (but not middle)    
+    znodes = xr.Dataset({'z': ("points", zsoi)})
+    
+    if srf_soilnode.size<=1:
+        # but not sure if 2 data points works with 'data.interp()' function
+        interp_vert = np.zeros(len(zsoi))
+        for iz in range(len(zsoi)):
+            if zsoi[iz]<= srf_soilnode:
+                interp_vert[iz] = srf_soildata
+            else:
+                continue
+                           
+        return interp_vert
+    
+    else:
+        data = xr.DataArray(srf_soildata, 
+                        dims=("z"), 
+                        coords={"z": srf_soilnode})
+        interp_vert = data.interp(znodes, method='linear', \
+                                  kwargs={'fill_value': 0})
+        return interp_vert.as_numpy()
             
 #--- # 
 # 

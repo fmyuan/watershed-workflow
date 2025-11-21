@@ -894,16 +894,38 @@ if ELM_SOILCOLUMN:
 	surf_from_atsm2['LONGXY'] = elmdomain['xc']
 	
 	# surfdata
-	surf_vars = 'TOPO,SOIL_THICKNESS,PCT_SAND,PCT_CLAY,SOM_THICKNESS,ORGANIC'
+	surf_vars = 'TOPO,PCT_SAND,PCT_CLAY,ORGANIC'
+	nlevsoi = 10
+	
 	# from ATS
 	surf_from_atsm2['TOPO'] = m2.centroids[:,2]   # elevation
-	surf_from_atsm2['SOIL_THICKNESS'] = m2.cell_data['thickness [m]']
-	surf_from_atsm2['PCT_SAND'] = m2.cell_data['total sand pct [%]'] 
-	surf_from_atsm2['PCT_CLAY'] = m2.cell_data['total clay pct [%]']
+	
+	# looks like ATS not really have layered properties of soil
+	# to be consistent, ELM should be in a similar way
+	znodes = m2.cell_data['thickness [m]'].to_numpy()
+	zdata = m2.cell_data['total sand pct [%]'].to_numpy()
+	temp_data = np.zeros((nlevsoi, ngrid))
+	for ig in range(ngrid):
+		temp_data[:,ig] = \
+			elm_mksrfdata.mksrfdata_soilcolumn_interp( \
+						srf_soildata=zdata[ig], \
+						srf_soilnode=znodes[ig])
+	surf_from_atsm2['PCT_SAND'] = temp_data 
+	
+	zdata = m2.cell_data['total clay pct [%]'].to_numpy()
+	temp_data = np.zeros((nlevsoi, ngrid))
+	for ig in range(ngrid):
+		temp_data[:,ig] = \
+			elm_mksrfdata.mksrfdata_soilcolumn_interp( \
+						srf_soildata=zdata[ig], \
+						srf_soilnode=znodes[ig], \
+						nlevsoi = nlevsoi)
+	surf_from_atsm2['PCT_CLAY'] = temp_data
+
+	
 	# from SoilGrids v2.0.1
 	soilgrids_dir = os.path.join(data_dir,'soil_structure','soilgrids')
 	os.makedirs(soilgrids_dir, exist_ok=True)
-	surf_from_atsm2['SOM_THICKNESS'] = [0.05, 0.10, 0.15, 0.3, 0.4, 1.0]
 	xlmt = elmdomain['xv'].flatten()
 	xrange = [np.nanmin(xlmt), np.nanmax(xlmt)]
 	ylmt = elmdomain['yv'].flatten()
@@ -917,24 +939,35 @@ if ELM_SOILCOLUMN:
 			outputpath=soilgrids_dir, \
             soilvars=soilvars, \
             value='mean')
-    
-	#soilgrids_crs = watershed_workflow.crs.from_string('+proj=igh +lat_0=0 +lon_0=0 +datum=WGS84 +units=m +no_defs')
+	#
 	vardata = {}
 	for ivar in soilvars:
-		vardata[ivar] = np.empty((ngrid, len(horizons)))
+		temp_data = np.empty((len(horizons), ngrid))
 		for iz in range(len(horizons)):
 			zstr=horizons[iz]
 			svar_horizon_id = ivar+'_'+zstr+'_mean'
-			svar_horizon_value_tif = soilgrids_dir+'/'+svar_horizon_id+'-latlon.tif'
+			svar_horizon_value_tif = soilgrids_dir+'/'+svar_horizon_id+'.tif'
 			svar = watershed_workflow.sources.ManagerRaster(svar_horizon_value_tif)
 			svar2 = svar.getDataset(watershed.exterior, watershed.crs)['band_1']
 			# map to the mesh
 			m2.cell_data[svar_horizon_id] = watershed_workflow.getDatasetOnMesh(m2, svar2, method='linear')
-			vardata[ivar][:,iz] = m2.cell_data[svar_horizon_id].to_numpy()
+			temp_data[iz,:] = m2.cell_data[svar_horizon_id].to_numpy()
 
+		znodes = np.array([0.0, 0.025, 0.10, 0.225, 0.45, 0.80, 1.50, 2.0])  #mid-horizon + 2-ends (from top-bottom range of data interpolation)
+		# ELM soil column data has 10 layers
+		vardata[ivar] = np.empty((nlevsoi, ngrid))
+		for ig in range(ngrid):
+			zdata = np.concatenate(([temp_data[0,ig]],temp_data[:,ig],[temp_data[-1,ig]]))
+			vardata[ivar][:,ig] = \
+				elm_mksrfdata.mksrfdata_soilcolumn_interp( \
+						srf_soildata=zdata, \
+						srf_soilnode=znodes, \
+						nlevsoi=nlevsoi)
+			
 	#
-	if 'ocd' in vardata.keys() and 'bdod' in vardata.keys():
-		surf_from_atsm2['ORGANIC'] = vardata['ocd']*0.1
+	if 'ocd' in vardata.keys():
+		surf_from_atsm2['ORGANIC'] = vardata['ocd']*0.1 #but not sure if 'ocd' in kgC or kgSOM ???
+	
 	elm_mksrfdata.mksrfdata_updatevals(ncfin, \
 						fsurfnc_out=output_filenames['elmsurfdata'], \
 						user_srf_data=surf_from_atsm2, \
@@ -942,9 +975,9 @@ if ELM_SOILCOLUMN:
 
 
     # visualizing ELM data, as needed
-	elmvar = 'TOPO'
+	elmvar = 'ORGANIC'
 	if True:
-		m2.cell_data[elmvar] = surf_from_atsm2[elmvar]
+		m2.cell_data[elmvar] = surf_from_atsm2[elmvar][0,:]
 
 		# simply plotting
 		elmvar_gons = m2.plot(facecolors=m2.cell_data[elmvar], cmap='RdBu', edgecolors=None)
@@ -967,7 +1000,7 @@ else:
 DTB = m2.cell_data['dtb'].values
 soil_color = m2.cell_data['soil_color'].values
 geo_color = m2.cell_data['geology_color'].values
-soil_thickness = m2.cell_data['soil thickness'].values
+soil_thickness = m2.cell_data['thickness [m]'].values
 
 
 # data structures needed for extrusion
@@ -1079,8 +1112,8 @@ def plotMetData(met, x=5, y=5):
     ax = fig.add_subplot(121)
     
     met_data_single_pixel = met.isel({'time':slice(0,365),
-                                               'x' : 5,
-                                               'y' : 5})
+                                               'x' : x,
+                                               'y' : y})
     
     met_data_single_pixel['precipitation rain [m s^-1]'].plot(color='b', label='rain')
     met_data_single_pixel['precipitation snow [m SWE s^-1]'].plot(color='c', label='snow')
@@ -1095,7 +1128,7 @@ def plotMetData(met, x=5, y=5):
     
     plt.show()
 
-plotMetData(met_data_transient)
+plotMetData(met_data_transient,x=3,y=4)
 
 # write transient data to disk
 filename = toOutput(f'{myname}_aorc-{start.year}-{end.year}.h5')
@@ -1127,7 +1160,7 @@ met_data_typical = watershed_workflow.data.computeAverageYear(met_data_noleap, (
 met_data_typical_ats = watershed_workflow.meteorology.convertAORCToATS(met_data_typical)
 
 # plot a few of the met data -- does it look reasonable?
-plotMetData(met_data_typical_ats)
+plotMetData(met_data_typical_ats,x=3,y=4)
 
 # write cyclic steadystate data to disk
 filename = toOutput(f'{myname}_daymet-CyclicSteadystate.h5')

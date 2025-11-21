@@ -19,7 +19,7 @@ def elm_arcradians2_from_km2(area_km2, R_meters=6.37122e6):
 #
 
 #--- #------ ELM soil column layer thickness and depths (nodes and interfaces) ------#
-def soilcolumn(more_vertlayers=False, nlevgrnd=15):
+def soilcolumn(more_vertlayers=False, nlevgrnd=15, printout=False):
     
     # a few ELM constants relevant to soil column
     scalez      = 0.025   # Soil layer thickness discretization (m)
@@ -88,9 +88,10 @@ def soilcolumn(more_vertlayers=False, nlevgrnd=15):
        zisoi[j] = 0.5*(zsoi[j]+zsoi[j+1])         
     zisoi[nlevgrnd] = zsoi[nlevgrnd] + 0.5*dzsoi[nlevgrnd]
 
-    print('zsoi with 0 indexing as surface: ', zsoi) 
-    print('zisoi with 0 indexing as surface: ', zisoi)
-    print('dzsoi with 0 indexing as surface: ', dzsoi)
+    if printout:
+        print('zsoi with 0 indexing as surface: ', zsoi) 
+        print('zisoi with 0 indexing as surface: ', zisoi)
+        print('dzsoi with 0 indexing as surface: ', dzsoi)
 
     return zisoi, dzsoi, zsoi
 
