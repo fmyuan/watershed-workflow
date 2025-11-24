@@ -67,6 +67,10 @@ class Manager3DEP(manager_dataset.ManagerDataset):
         result = py3dep.get_map(request.variables, request.geometry, self._resolution, 
                                geo_crs=self.native_crs_in, crs=self.native_crs_out)
         
+        if 'DEM' in request.variables:
+            logging.info(f'save DEM tiff as "dem_raw.tif" ')
+            result.rio.to_raster("dem_raw.tif")
+        
         # py3dep returns DataArray for single layer, Dataset for multiple layers
         if isinstance(result, xr.DataArray):
             # Convert DataArray to Dataset
