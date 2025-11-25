@@ -94,7 +94,8 @@ def download_geotiff_soilgrids(Range_XLONG=[], Range_YLATI=[], outputpath='./ori
 
 #--- #
 # interplating layered soil data to match with ELM soil vertical structure
-def mksrfdata_soilcolumn_interp(srf_soildata=np.empty((0)), srf_soilnode=np.empty((0)), nlevsoi=10):
+def mksrfdata_soilcolumn_interp(srf_soildata=np.empty((0)), srf_soilnode=np.empty((0)), \
+                                nlevsoi=10, fill_method='zero'):
     
     from watershed_workflow.elm_domain import soilcolumn
     
@@ -112,11 +113,14 @@ def mksrfdata_soilcolumn_interp(srf_soildata=np.empty((0)), srf_soilnode=np.empt
     if srf_soilnode.size<=1:
         # but not sure if 2 data points works with 'data.interp()' function
         interp_vert = np.zeros(len(zsoi))
-        for iz in range(len(zsoi)):
-            if zsoi[iz]<= srf_soilnode:
-                interp_vert[iz] = srf_soildata
-            else:
-                continue
+        if fill_method == 'extrapolate':
+            interp_vert[:] = srf_soildata
+        else:
+            for iz in range(len(zsoi)):
+                if zsoi[iz]<= srf_soilnode:
+                    interp_vert[iz] = srf_soildata
+                else:
+                    continue
                            
         return interp_vert
     
@@ -124,8 +128,13 @@ def mksrfdata_soilcolumn_interp(srf_soildata=np.empty((0)), srf_soilnode=np.empt
         data = xr.DataArray(srf_soildata, 
                         dims=("z"), 
                         coords={"z": srf_soilnode})
-        interp_vert = data.interp(znodes, method='linear', \
+        
+        if fill_method == 'zero':
+            interp_vert = data.interp(znodes, method='linear', \
                                   kwargs={'fill_value': 0})
+        else:
+            interp_vert = data.interp(znodes, method='linear', \
+                                  kwargs={'fill_value': fill_method})        
         return interp_vert.as_numpy()
             
 #--- # 

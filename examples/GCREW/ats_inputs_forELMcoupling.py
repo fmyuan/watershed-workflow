@@ -61,6 +61,7 @@ import geopandas as gpd
 import cftime, datetime
 pd.options.display.max_columns = None
 
+import shutil
 
 #--- provide paths to relevant packages for mesh and input file generation 
 
@@ -210,7 +211,7 @@ refine_A1 = refine_L1**2 / 2
 # - note that we use the NoLeap calendar, same as DayMet.  Simulations are typically run over the "water year"
 #   which starts August 1.
 start = cftime.DatetimeNoLeap(2003,1,1)  # modis LAI starts from 2002-07-04
-end = cftime.DatetimeNoLeap(2021,12,31)  # ROAC v.1.1 met. data ends by 2021-12-31  
+end = cftime.DatetimeNoLeap(2022,1,1)  # ROAC v.1.1 met. data ends by 2021-12-31  
 
 nyears_cyclic_steadystate = 4   # how many years to run spinup
 
@@ -362,13 +363,13 @@ m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers,
                                                             diagnostics=True)
 
 # prepartition to maintain ordering
-m2 = m2.partition(16, True)
+m2 = m2.partition(8, True)
 
 # get a raster for the elevation map, based on 3DEP
 #dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
 
 # locally available raster DEM
-dem_raster = os.path.join(data_dir,'ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew.tif') 
+dem_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew.tif') 
 sources['DEM'] = watershed_workflow.sources.ManagerRaster(dem_raster)
 dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
 m2.cell_data['DEM'] = watershed_workflow.getDatasetOnMesh(m2, dem, method='linear')
@@ -403,7 +404,7 @@ plt.show()
 river_mask=np.zeros((len(m2.conn)))
 for i, elem in enumerate(m2.conn):
     if not len(elem)==3:
-        river_mask[i]=1     
+        river_mask[i]=1
 watershed_workflow.condition.fillPitsDual(m2, is_waterbody=river_mask)
 
 # There are a range of options to condition river corridor mesh. We hydrologically condition the river mesh, ensuring unimpeded water flow in river corridors by globally adjusting flowlines to rectify artificial obstructions from inconsistent DEM elevations or misalignments. Please read the documentation for more information
@@ -518,7 +519,7 @@ nlcd_labels_dict
 
 for ls in m2.labeled_sets:
     print(f'{ls.setid} : {ls.entity} : {len(ls.ent_ids)} : "{ls.name}"')
-    
+
 
 #--- V-2. MODIS LAI ---
 
@@ -654,17 +655,20 @@ nrcs.set_index('ATS ID', drop=True, inplace=True)
 
 # create a new soil color and a soil thickness map using the ATS IDs
 soil_color = -np.ones_like(soil_color_mukey)
-soil_thickness = np.nan * np.ones(soil_color.shape, 'd')
+soil_value = np.nan * np.ones(soil_color.shape, 'd')
 
 for v in ['thickness [m]','total sand pct [%]', 'total clay pct [%]']:
 	if v not in nrcs.keys(): continue
-	for ats_ID, ID, thickness in zip(nrcs.index, nrcs.mukey, nrcs[v]):
+	for ats_ID, ID, value in zip(nrcs.index, nrcs.mukey, nrcs[v]):
 	    mask = np.where(soil_color_mukey == ID)
-	    soil_thickness[mask] = thickness
+	    soil_value[mask] = value
 	    if 'soil_color' not in m2.cell_data.keys(): soil_color[mask] = ats_ID
 	
 	if 'soil_color' not in m2.cell_data.keys(): m2.cell_data['soil_color'] = soil_color
-	m2.cell_data[v] = soil_thickness
+	# Nan unfortunately is not good to ELM soil profile
+	idx = np.where(np.isnan(soil_value))
+	if len(idx[0])>0: soil_value[idx]=np.nanmean(soil_value)  # need a better way to do nearest interp (TODO)
+	m2.cell_data[v] = soil_value
 
 
 # plot the soil color
@@ -876,8 +880,7 @@ if ELM_SOILCOLUMN:
 #---	# VII-1A(2). extracting and re-distributing ELM surfdata*.nc, according to new domain.nc
 	# (CAN do offline)
 	ncsrf0 = 'surfdata_0.5x0.5_simyr1850_c240308_TOP.nc' # this will be from E3SM inputdata server or local
-	ncflu0 = None
-	#ncflu0 = 'landuse.timeseries_0.5x0.5_hist_simyr1850-2015_c240308.nc'
+	ncflu0 = 'landuse.timeseries_0.5x0.5_hist_simyr1850-2015_c240308.nc'
 	
 	allsurf = elm_domain.refine_surfdata(outdir=work_dir, \
                     lnd_domain_file='../domain.lnd.r05_RRSwISC6to18E3r5.240328.nc', \
@@ -908,41 +911,48 @@ if ELM_SOILCOLUMN:
 	surf_vars+='TOPO'
 	surf_from_atsm2['TOPO'] = m2.centroids[:,2]   # elevation
 
-	topo_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew_slope.tif')
-	topo = watershed_workflow.sources.ManagerRaster(dem_raster). \
+	topo_raster = os.path.join(data_dir,'topography','basin_slope.tif')
+	if os.path.exists(topo_raster):
+		topo = watershed_workflow.sources.ManagerRaster(topo_raster). \
 				getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
-	m2.cell_data['SLOPE'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
-	surf_vars+=',SLOPE'
-	surf_from_atsm2['SLOPE'] = m2.cell_data['SLOPE'].to_numpy()
+		m2.cell_data['SLOPE'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
+		surf_vars+=',SLOPE'
+		surf_from_atsm2['SLOPE'] = m2.cell_data['SLOPE'].to_numpy()
 
-	topo_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew_aspect.tif')
-	topo = watershed_workflow.sources.ManagerRaster(dem_raster). \
+	topo_raster = os.path.join(data_dir,'topography','basin_aspect.tif')
+	if os.path.exists(topo_raster):
+		topo = watershed_workflow.sources.ManagerRaster(topo_raster). \
 				getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
-	m2.cell_data['ASPECT'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
-	surf_vars+=',SINSL_SINAS' #sin(SLOPE)*sin(ASPECT) 
-	surf_from_atsm2['SINSL_SINAS'] = np.sin(m2.cell_data['SLOPE'].to_numpy())* \
-									np.sin(m2.cell_data['ASPECT'].to_numpy())
-	surf_vars+=',SINSL_COSAS' #sin(SLOPE)*cos(ASPECT) 
-	surf_from_atsm2['SINSL_COSAS'] = np.sin(m2.cell_data['SLOPE'].to_numpy())* \
-									np.cos(m2.cell_data['ASPECT'].to_numpy())
+		m2.cell_data['ASPECT'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
+	
+		if 'SLOPE' in m2.cell_data.keys():
+			surf_vars+=',SINSL_SINAS' #sin(SLOPE)*sin(ASPECT) 
+			surf_from_atsm2['SINSL_SINAS'] = np.sin(m2.cell_data['SLOPE'].to_numpy())* \
+										np.sin(m2.cell_data['ASPECT'].to_numpy())
+			surf_vars+=',SINSL_COSAS' #sin(SLOPE)*cos(ASPECT) 
+			surf_from_atsm2['SINSL_COSAS'] = np.sin(m2.cell_data['SLOPE'].to_numpy())* \
+										np.cos(m2.cell_data['ASPECT'].to_numpy())
 
 
-	topo_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew_skyview.tif') 
-	topo = watershed_workflow.sources.ManagerRaster(dem_raster). \
+	topo_raster = os.path.join(data_dir,'topography','basin_skyview.tif') 
+	if os.path.exists(topo_raster):
+		topo = watershed_workflow.sources.ManagerRaster(topo_raster). \
 				getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
-	m2.cell_data['SKYVIEW'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
-	surf_vars+=',SKYVIEW'
-	surf_from_atsm2['SKYVIEW'] = m2.cell_data['SKYVIEW'].to_numpy()
+		m2.cell_data['SKY_VIEW'] = watershed_workflow.getDatasetOnMesh(m2, topo, method='linear')
+		surf_vars+=',SKY_VIEW'
+		surf_from_atsm2['SKY_VIEW'] = m2.cell_data['SKY_VIEW'].to_numpy()
 
 	#
 	#TERRAIN_CONFIG: may be estimated, according to Lee et al. (2011) (Eq. (4)), as following: 
 	# (1+cos(slope))/2-SKYVIEW
 	# Wei-Liang Lee, K.N. Liou, and Alex Hall, 2011. Parameterization of solar fluxes over mountain surfaces for application to climate models. JGR,116, D01101
-	m2.cell_data['TERRAIN_CONFIG'] = \
-		(1.0+np.cos(m2.cell_data['SLOPE'].to_numpy()))/2.0 \
-		- m2.cell_data['SKYVIEW'].to_numpy()
-	surf_vars+=',TERRAIN_CONFIG'
-	surf_from_atsm2['TERRAIN_CONFIG'] = m2.cell_data['TERRAIN_CONFIG'].to_numpy()
+	if 'SLOPE' in m2.cell_data.keys() and \
+		'SKY_VIEW' in m2.cell_data.keys():
+		m2.cell_data['TERRAIN_CONFIG'] = \
+			(1.0+np.cos(m2.cell_data['SLOPE'].to_numpy()))/2.0 \
+			- m2.cell_data['SKY_VIEW'].to_numpy()
+		surf_vars+=',TERRAIN_CONFIG'
+		surf_from_atsm2['TERRAIN_CONFIG'] = m2.cell_data['TERRAIN_CONFIG'].to_numpy()
  
 	# looks like ATS not really have layered properties of soil
 	# to be consistent, ELM should be in a similar way
@@ -953,7 +963,9 @@ if ELM_SOILCOLUMN:
 		temp_data[:,ig] = \
 			elm_mksrfdata.mksrfdata_soilcolumn_interp( \
 						srf_soildata=zdata[ig], \
-						srf_soilnode=znodes[ig])
+						srf_soilnode=znodes[ig], \
+						nlevsoi = nlevsoi, fill_method="extrapolate")
+		
 	surf_vars+=',PCT_SAND'
 	surf_from_atsm2['PCT_SAND'] = temp_data 
 	
@@ -964,7 +976,7 @@ if ELM_SOILCOLUMN:
 			elm_mksrfdata.mksrfdata_soilcolumn_interp( \
 						srf_soildata=zdata[ig], \
 						srf_soilnode=znodes[ig], \
-						nlevsoi = nlevsoi)
+						nlevsoi = nlevsoi, fill_method="extrapolate")
 	surf_vars+=',PCT_CLAY'
 	surf_from_atsm2['PCT_CLAY'] = temp_data
 
@@ -1000,15 +1012,24 @@ if ELM_SOILCOLUMN:
 			temp_data[iz,:] = m2.cell_data[svar_horizon_id].to_numpy()
 
 		znodes = np.array([0.0, 0.025, 0.10, 0.225, 0.45, 0.80, 1.50, 2.0])  #mid-horizon + 2-ends (from top-bottom range of data interpolation)
-		# ELM soil column data has 10 layers
+			
+		# ELM soil column data has 10 layers down to about 4.2 m
 		vardata[ivar] = np.empty((nlevsoi, ngrid))
 		for ig in range(ngrid):
 			zdata = np.concatenate(([temp_data[0,ig]],temp_data[:,ig],[temp_data[-1,ig]]))
-			vardata[ivar][:,ig] = \
-				elm_mksrfdata.mksrfdata_soilcolumn_interp( \
+			if ivar in ['bdod','sand','silt','clay']:
+				vardata[ivar][:,ig] = \
+					elm_mksrfdata.mksrfdata_soilcolumn_interp( \
 						srf_soildata=zdata, \
 						srf_soilnode=znodes, \
-						nlevsoi=nlevsoi)			
+						nlevsoi=nlevsoi, fill_method="extrapolate")
+			if ivar in ['ocd']:
+				vardata[ivar][:,ig] = \
+					elm_mksrfdata.mksrfdata_soilcolumn_interp( \
+						srf_soildata=zdata, \
+						srf_soilnode=znodes, \
+						nlevsoi=nlevsoi)
+							
 	if 'ocd' in vardata.keys():
 		surf_vars+=',ORGANIC'
 		surf_from_atsm2['ORGANIC'] = vardata['ocd']*0.1 #but not sure if 'ocd' in kgC or kgSOM ???
@@ -1031,13 +1052,13 @@ if ELM_SOILCOLUMN:
 		elmvar_gons = m2.plot(facecolors=m2.cell_data[elmvar], cmap='RdBu', edgecolors=None)
 		plt.show()
 
-    #	
+    #
 else:
 #---	# VII-1B. dz manually constructed
 	# this looks like it would work out, with rounder numbers:
 	dzs_soil = [0.05, 0.05, 0.05, 0.12, 0.23, 0.5, 0.5, 0.5]
 	print(sum(dzs_soil))
-	
+
 	# 50m total thickness, minus 2m soil thickness, leaves us with 48 meters to make up.
 	dzs_geo = [1.0, 2.0, 4.0, 8.0, 11, 11, 11]
 	print(dzs_geo)
@@ -1064,7 +1085,7 @@ for dz in dzs_soil:
     layer_types.append('constant')
     layer_data.append(dz)
     layer_ncells.append(1)
-    
+
     # use glhymps params
     br_or_geo = np.where(depth < DTB, geo_color, 999)
     soil_or_br_or_geo = np.where(np.bitwise_and(soil_color > 0, depth < soil_thickness),
@@ -1073,14 +1094,14 @@ for dz in dzs_soil:
 
     layer_mat_ids.append(soil_or_br_or_geo)
     depth += 0.5 * dz
-    
+
 #--- VII-3. geologic layer
 for dz in dzs_geo:
     depth += 0.5 * dz
     layer_types.append('constant')
     layer_data.append(dz)
     layer_ncells.append(1)
-    
+
     geo_or_br = np.where(depth < DTB, geo_color, 999)
 
     layer_mat_ids.append(geo_or_br)
@@ -1116,7 +1137,7 @@ print('Extruded 3D side sets')
 print('---------------------')
 for ls in m3.side_sets:
     print(f'{ls.setid} : FACE : {len(ls.cell_list)} : "{ls.name}"')
-    
+
 
 # save the mesh to disk
 output_filenames['mesh'] = toOutput(f'{myname}.exo')
@@ -1235,8 +1256,8 @@ if ELM_SOILCOLUMN:
 	
 	y = met_noleap['latitude'].to_numpy()
 	x = met_noleap['longitude'].to_numpy()
-	elmmet['LONGXY'] = np.meshgrid(x,y)[1].flatten() # 2D -> 1D
-	elmmet['LATIXY'] = np.meshgrid(x,y)[0].flatten() # 2D -> 1D
+	elmmet['LONGXY'] = np.meshgrid(x,y)[0].flatten() # 2D -> 1D
+	elmmet['LATIXY'] = np.meshgrid(x,y)[1].flatten() # 2D -> 1D
 	
 	#
 	t = met_noleap['time'].to_numpy()

@@ -133,6 +133,7 @@ def grids_nearest_or_within(src_grids={}, masked_pts={}, remask_approach = 'near
     # TIP: in this case, both domain and land surface grid-systems are EXACTLY matching with each other
     src_yc = src_grids['yc']
     src_xc = src_grids['xc']
+    nv = 4 # by default
     if LONGXY360: 
         src_xc[src_xc<0.0]=360+src_xc[src_xc<0.0]
     else:
@@ -146,7 +147,8 @@ def grids_nearest_or_within(src_grids={}, masked_pts={}, remask_approach = 'near
             src_xv[src_xv>180.0]=-360+src_xv[src_xv>180.0]
             # need to re-adj for cross -180/180 line's grid
             
-        src_yv = src_grids['yv']    
+        src_yv = src_grids['yv']
+        nv = src_xv.shape[-1]
     
     # 
     # 0.5 times of grid-size edges 
@@ -198,11 +200,11 @@ def grids_nearest_or_within(src_grids={}, masked_pts={}, remask_approach = 'near
         boxed_yv1 = src_yv[...,0]; boxed_xv1 = src_xv[...,0]
         boxed_yv2 = src_yv[...,1]; boxed_xv2 = src_xv[...,1]
         boxed_yv3 = src_yv[...,2]; boxed_xv3 = src_xv[...,2]
-        boxed_yv4 = src_yv[...,3]; boxed_xv4 = src_xv[...,3]        
+        if nv==4: boxed_yv4 = src_yv[...,3]; boxed_xv4 = src_xv[...,3]        
         boxed_yv1=boxed_yv1[boxed_idx]; boxed_xv1=boxed_xv1[boxed_idx]
         boxed_yv2=boxed_yv2[boxed_idx]; boxed_xv2=boxed_xv2[boxed_idx]
         boxed_yv3=boxed_yv3[boxed_idx]; boxed_xv3=boxed_xv3[boxed_idx]
-        boxed_yv4=boxed_yv4[boxed_idx]; boxed_xv4=boxed_xv4[boxed_idx]
+        if nv==4: boxed_yv4=boxed_yv4[boxed_idx]; boxed_xv4=boxed_xv4[boxed_idx]
     
     # trunked source domain's xc,yc, i.e. centroids of xv/yv which formed polygons above, 
     # to be marked in X_axis, Y_axis, and re-indexing
@@ -273,8 +275,11 @@ def grids_nearest_or_within(src_grids={}, masked_pts={}, remask_approach = 'near
         vpts1=[(x,y) for x,y in zip(boxed_xv1,boxed_yv1)]
         vpts2=[(x,y) for x,y in zip(boxed_xv2,boxed_yv2)]
         vpts3=[(x,y) for x,y in zip(boxed_xv3,boxed_yv3)]
-        vpts4=[(x,y) for x,y in zip(boxed_xv4,boxed_yv4)]
-        lines = [(vpts1[i], vpts2[i], vpts3[i], vpts4[i], vpts1[i]) for i in range(len(vpts1))]
+        lines = [(vpts1[i], vpts2[i], vpts3[i], vpts1[i]) for i in range(len(vpts1))]
+        if nv==4: 
+            vpts4=[(x,y) for x,y in zip(boxed_xv4,boxed_yv4)]
+            lines = [(vpts1[i], vpts2[i], vpts3[i], vpts4[i], vpts1[i]) for i in range(len(vpts1))]
+        
         lines_str = [LineString(lines[i]) for i in range(len(lines))]
         polygons = list(polygonize(MultiLineString(lines_str)))
         # if regular x/y mesh may be do like following: 
@@ -330,7 +335,7 @@ def grids_nearest_or_within(src_grids={}, masked_pts={}, remask_approach = 'near
             boxed_yv1=boxed_yv1[sorted_ptsidx]; boxed_xv1=boxed_xv1[sorted_ptsidx]
             boxed_yv2=boxed_yv2[sorted_ptsidx]; boxed_xv2=boxed_xv2[sorted_ptsidx]
             boxed_yv3=boxed_yv3[sorted_ptsidx]; boxed_xv3=boxed_xv3[sorted_ptsidx]
-            boxed_yv4=boxed_yv4[sorted_ptsidx]; boxed_xv4=boxed_xv4[sorted_ptsidx]
+            if nv==4: boxed_yv4=boxed_yv4[sorted_ptsidx]; boxed_xv4=boxed_xv4[sorted_ptsidx]
         
         # re-do indices of [yc,xc] in [YY,XX] meshgrid
         boxed_idx = (boxed_idx[0][sorted_ptsidx], boxed_idx[1][sorted_ptsidx])
@@ -366,8 +371,11 @@ def grids_nearest_or_within(src_grids={}, masked_pts={}, remask_approach = 'near
         grid_remasked_arr = sub_remasked
         xc_arr = boxed_xc
         yc_arr = boxed_yc
-        xv_arr = np.stack((boxed_xv1,boxed_xv2,boxed_xv3,boxed_xv4), axis=1)
-        yv_arr = np.stack((boxed_yv1,boxed_yv2,boxed_yv3,boxed_yv4), axis=1)
+        xv_arr = np.stack((boxed_xv1,boxed_xv2,boxed_xv3), axis=1)
+        yv_arr = np.stack((boxed_yv1,boxed_yv2,boxed_yv3), axis=1)
+        if nv==4:
+            xv_arr = np.stack((boxed_xv1,boxed_xv2,boxed_xv3,boxed_xv4), axis=1)
+            yv_arr = np.stack((boxed_yv1,boxed_yv2,boxed_yv3,boxed_yv4), axis=1)
  
     # 
     # output arrays

@@ -12,7 +12,7 @@ def set_e3sm_input(path):
     """Sets the root path to search for E3SM input data"""
     global DIN_LOC_ROOT
     DIN_LOC_ROOT = path
-    
+
 def elm_arcradians2_from_km2(area_km2, R_meters=6.37122e6):
     one_over_re2 = 1.0e6/R_meters/R_meters
     return area_km2 * one_over_re2
@@ -20,13 +20,13 @@ def elm_arcradians2_from_km2(area_km2, R_meters=6.37122e6):
 
 #--- #------ ELM soil column layer thickness and depths (nodes and interfaces) ------#
 def soilcolumn(more_vertlayers=False, nlevgrnd=15, printout=False):
-    
+
     # a few ELM constants relevant to soil column
     scalez      = 0.025   # Soil layer thickness discretization (m)
     thick_equal = 0.2
     nlev_equalspace   = 15
     toplev_equalspace =  6
-    
+
 
 
     '''
@@ -34,13 +34,13 @@ def soilcolumn(more_vertlayers=False, nlevgrnd=15, printout=False):
     '''
     # Soil layers and interfaces (assumed same for all non-lake patches)
     # "0" refers to soil surface and "nlevbed" refers to the bottom of model soil
-    
-    # node depths. 
-    
+
+    # node depths.
+
     # NOTE: These elm soil-layer nodes are within a layer, but NOT the centroids if varying layerthickness.
     # the middle-point of two adjacent nodes are called 'interfaces' (layer's up/bottom)
     # In ELM, fluxes are occured btw adjacent nodes. but 'mass' are within a layer volume.
-    
+
     # For convenience, index 0 in all np array is for 'surface' so that layer real indices are matching with ELM's
 
     if ( more_vertlayers ):
@@ -50,33 +50,28 @@ def soilcolumn(more_vertlayers=False, nlevgrnd=15, printout=False):
         # with higher resolution to a deeper depth, so that, for example, permafrost
         # dynamics are not lost due to an inability to resolve temperature, moisture, 
         # and biogeochemical dynamics at the base of the active layer
-       
+
         nlevgrnd    =  15 + nlev_equalspace
 
         zsoi = np.empty(nlevgrnd+1); zsoi[:] = 0.0
         for j in range(1, toplev_equalspace+1):
             zsoi[j] = scalez*(math.exp(0.5*(j-0.5))-1.0)
-       
 
         for j in range(toplev_equalspace+1,toplev_equalspace + nlev_equalspace+1):
             zsoi[j] = zsoi[j-1] + thick_equal
-       
 
         for j in range(toplev_equalspace + nlev_equalspace +1, nlevgrnd+1):
             zsoi[j] = scalez*(math.exp(0.5*((j - nlev_equalspace)-0.5))-1.0) + nlev_equalspace * thick_equal
-       
-    
+
     else:
 
         zsoi = np.empty(nlevgrnd+1); zsoi[:] = 0.0
         for j in range(1, nlevgrnd+1):
-            zsoi[j] = scalez*(math.exp(0.5*(j-0.5))-1.0)    
-       
-    
+            zsoi[j] = scalez*(math.exp(0.5*(j-0.5))-1.0)
 
     # thickness b/n two interfaces (i.e. ATS z-coordinated-nodes)
     dzsoi = np.empty(nlevgrnd+1); dzsoi[:] = 0.0
-    dzsoi[1] = 0.5*(zsoi[1]+zsoi[2])             
+    dzsoi[1] = 0.5*(zsoi[1]+zsoi[2])
     for j in range(2,nlevgrnd):
        dzsoi[j]= 0.5*(zsoi[j+1]-zsoi[j-1])
     dzsoi[nlevgrnd] = zsoi[nlevgrnd]-zsoi[nlevgrnd-1]
@@ -85,11 +80,11 @@ def soilcolumn(more_vertlayers=False, nlevgrnd=15, printout=False):
     zisoi = np.empty(nlevgrnd+1); zisoi[:] = 0.0
     zisoi[0] = 0.0
     for j in range(1, nlevgrnd):
-       zisoi[j] = 0.5*(zsoi[j]+zsoi[j+1])         
+       zisoi[j] = 0.5*(zsoi[j]+zsoi[j+1])
     zisoi[nlevgrnd] = zsoi[nlevgrnd] + 0.5*dzsoi[nlevgrnd]
 
     if printout:
-        print('zsoi with 0 indexing as surface: ', zsoi) 
+        print('zsoi with 0 indexing as surface: ', zsoi)
         print('zisoi with 0 indexing as surface: ', zisoi)
         print('dzsoi with 0 indexing as surface: ', dzsoi)
 
@@ -97,23 +92,23 @@ def soilcolumn(more_vertlayers=False, nlevgrnd=15, printout=False):
 
 #
 
-''' 
+'''
  standardilized ELM domain.nc write
 '''
 def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_system=True):
-        
+
     # (optional) full 2D spatial extent
     if coord_system and 'X_axis' in elmdomain_data.keys():
         X_axis = elmdomain_data['X_axis']  # either longitude or projected geox, indiced as gridXID
         Y_axis = elmdomain_data['Y_axis']  # either latitude or projected geoy, indiced as gridYID
         XX = elmdomain_data['XX']  # longitude[Y_axis,X_axis], indiced as gridID
         YY = elmdomain_data['YY']  # latitude[Y_axis,X_axis], indiced as gridID
-              
-        # (optional) the following is for map conversion of 1D <==> 2D   
+
+        # (optional) the following is for map conversion of 1D <==> 2D
         grid_id_arr = elmdomain_data['gridID']
         grid_xid_arr = elmdomain_data['gridXID']
         grid_yid_arr = elmdomain_data['gridYID']
-        
+
     # standard
     lon_arr = elmdomain_data['xc']
     lat_arr = elmdomain_data['yc']
@@ -121,23 +116,23 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     yv_arr  = elmdomain_data['yv']
     if 'area' in elmdomain_data.keys():
         area_arr = elmdomain_data['area']
-    elif 'area_km2' in elmdomain_data.keys():         
+    elif 'area_km2' in elmdomain_data.keys():
         area_arr = elm_arcradians2_from_km2(elmdomain_data['area_km2'])
     else:
         print('Error: either "area" or "area_km2" not existed!')
         os.sys.exit(-1)
     mask_arr = elmdomain_data['mask']
     landfrac_arr = elmdomain_data['frac']
-    
-    # extra 
+
+    # extra
     if 'area_km2' in elmdomain_data.keys():
         area_km2_arr = elmdomain_data['area_km2']
-  
+
     nv = elmdomain_data['xv'].shape[1]
     if nv!= elmdomain_data['yv'].shape[1]:
         print('not equal vertices of xv: ', nv, ' and yv: ',elmdomain_data['yv'].shape[1])
         os.sys.exit(-2)
-    
+
     # write to nc file
     file_name = ncfile
     print("The domain file to be write is " + file_name)
@@ -166,18 +161,18 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
         w_nc_var.units = "degrees_east"
         w_nc_var.comment = "could be in unit of projected x such as meters"
         w_nc_fid.variables['x'][...] = X_axis
-    
+
         w_nc_var = w_nc_fid.createVariable('y', np.float64, ('y'))
         w_nc_var.long_name = 'latitude of y-axis'
         w_nc_var.units = "degrees_north"
         w_nc_var.comment = "could be in unit of projected y such as meters"
         w_nc_fid.variables['y'][...] = Y_axis
-    
+
         w_nc_var = w_nc_fid.createVariable('lon', np.float64, ('y','x'))
         w_nc_var.long_name = 'longitude of 2D land gridcell center (GCS_WGS_84), increasing from west to east'
         w_nc_var.units = "degrees_east"
         w_nc_fid.variables['lon'][...] = XX
-    
+
         w_nc_var = w_nc_fid.createVariable('lat', np.float64, ('y','x'))
         w_nc_var.long_name = 'latitude of 2D land gridcell center (GCS_WGS_84), increasing from south to north'
         w_nc_var.units = "degrees_north"
@@ -198,12 +193,12 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
         w_nc_var.long_name = '1d unique gridId in boxed range of coordinates y, x'
         w_nc_var.decription = "start from #0 at the lower left corner of the domain, covering all land and ocean gridcells" 
         w_nc_fid.variables['gridID'][...] = grid_id_arr
-    
+
         w_nc_var = w_nc_fid.createVariable('gridXID', np.int32, ('nj','ni'))
         w_nc_var.long_name = 'gridId x in boxed range of coordinate x'
         w_nc_var.decription = "start from #0 at the lower left corner and from west to east of the domain, with gridID=gridXID+gridYID*len(y)" 
         w_nc_fid.variables['gridXID'][...] = grid_xid_arr
-    
+
         w_nc_var = w_nc_fid.createVariable('gridYID', np.int32, ('nj','ni'))
         w_nc_var.long_name = 'gridId y in boxed range of coordinate y'
         w_nc_var.decription = "start from #0 at the lower left corner and from south to north of the domain, with gridID=gridXID+gridYID*len(y)" 
@@ -216,14 +211,14 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     w_nc_var.bounds = "xv"
     w_nc_var.comment = 'increasing from west to east'
     w_nc_fid.variables['xc'][...] = lon_arr
-        
+
     w_nc_var = w_nc_fid.createVariable('yc', np.float64, ('nj','ni'))
     w_nc_var.long_name = 'latitude of land gridcell center'
     w_nc_var.units = "degrees_north"
     w_nc_var.comment = 'decreasing from north to south'
     w_nc_fid.variables['yc'][...] = lat_arr
-        
-    # create the XC, YC variable        
+
+    # create the XC, YC variable
     #
     w_nc_var = w_nc_fid.createVariable('xv', np.float64, ('nj','ni','nv'))
     w_nc_var.long_name = 'longitude of land gridcell verticles'
@@ -265,7 +260,7 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
     w_nc_var.filter2 = "limit frac to [fminval,fmaxval]; fminval= 0.1000000E-02 fmaxval=  1.000000" ;
     w_nc_fid.variables['frac'][...] = landfrac_arr
 
-    w_nc_fid.close()  # close the new file 
+    w_nc_fid.close()  # close the new file
 
 def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc', 
                      LONGXY360=False, edge_wider=1.0, out2d=False, ncwrite_coords=True):
@@ -278,9 +273,9 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
         out2d          - output data in 2D or flatten (so-called unstructured)
         ncwrite_coords - when output type is 'domain_ncwrite', write coordinates and info OR not
     '''
-    
-    # 
-    # Open the source domain or surface nc file, 
+
+    #
+    # Open the source domain or surface nc file,
     # from which trunked a box with limits of [mask_yc,mask_xc]
     src = nc.Dataset(input_pathfile, 'r')
     # points = [y,x] coordinates for src's grid
@@ -297,16 +292,16 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
         src_mask = src.variables['mask'][...]
         src_area = src.variables['area'][...]
         src_landfrac = src.variables['frac'][...]
-    
+
     elif 'surfdata' in input_pathfile:
         # redo domain from an ELM surface data file
         src_yc = src.variables['LONGXY'][...]
         src_xc = src.variables['LATIXY'][...]
-        
+
         src_mask = src.variables['LANDFRAC_MASK'][...]
         src_area = src.variables['AREA'][...] # needs to convert from km^2 to rad^2
         src_landfrac = src.variables['LANDFRAC_PFT'][...]
-    
+
     else:
         print('Source domain file should be either a "domain*.nc" or a "surfdata*.nc" ')
         os.sys.exit(-1)
@@ -317,8 +312,7 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
     else:
         src_xc[src_xc<0.0]=360+src_xc[src_xc<0.0]
         src_xv[src_xv<0.0]=360+src_xv[src_xv<0.0]
-        
-    
+
     landmask = src_mask
     landfrac = src_landfrac
     area = src_area
@@ -331,8 +325,8 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
     #else:
     #    for iv in range(nv+1):
     #        yv[iv] = src_yv[...,iv]; xv1 = src_xv[...,iv]
-    
-    # re-meshing, by new mesh-griding with xc/yc as centroids 
+
+    # re-meshing, by new mesh-griding with xc/yc as centroids
     X_axis = xc
     Y_axis = yc
     [X_axis, i] = np.unique(X_axis, return_inverse=True)
@@ -342,26 +336,26 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
     yid = np.indices(XX.shape)[0]
     xyid = np.indices(XX.flatten().shape)[0]
     xyid = np.reshape(xyid, xid.shape)
-    
-    # indices of original grids in new-XX/YY coordinate system 
+
+    # indices of original grids in new-XX/YY coordinate system
     if (1 not in src_xc.shape):
-        # structured grids yc[nj,ni], xc[nj,ni]      
+        # structured grids yc[nj,ni], xc[nj,ni]
         # new indices of [yc,xc] in grid-mesh YY/XX
         # note: here don't override xc,yc, so xc=X_axis[i], yc=Y_axis[j]
         polygonized = np.isin(XX, X_axis[i]) & np.isin(YY, Y_axis[j])
-        ji = np.nonzero(polygonized) 
-        grid_xid = xid[ji]     
-        grid_yid = yid[ji]    
-        grid_id = xyid[ji]  
+        ji = np.nonzero(polygonized)
+        grid_xid = xid[ji]
+        grid_yid = yid[ji]
+        grid_id = xyid[ji]
 
     else:
         # unstructured  yc[1,ni], xc[1,ni]
         # new indices of paired [yc,xc] in grid-mesh YY/XX
-        grid_xid = xid[j,i]     
-        grid_yid = yid[j,i] 
+        grid_xid = xid[j,i]
+        grid_yid = yid[j,i]
         grid_id = xyid[j,i]
     #
-    
+
     # new grid vertices, middle of neiboured centroids
     if len(X_axis)>1:
         xdiff = np.diff(X_axis)/2.0
@@ -372,7 +366,7 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
     if len(Y_axis)>1:
         ydiff = np.diff(Y_axis)/2.0
     else:
-        ydiff = (max(src_yv)-min(src_yv))/2.0        
+        ydiff = (max(src_yv)-min(src_yv))/2.0
     ydiff = np.insert(ydiff,0,ydiff[0]*edge_wider)
     yv=np.append(Y_axis-ydiff,Y_axis[-1]+ydiff[-1]*edge_wider)  # new Y bounds for grids
     # re-fill vertices
@@ -385,12 +379,12 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
     yvv, xvv = np.meshgrid(yv[1:], xv[:-1], indexing='ij')   # left-upper vertice
     xv4 = xvv[(grid_yid,grid_xid)]; yv4 = yvv[(grid_yid,grid_xid)]
 
-    # to 2D but masked    
+    # to 2D but masked
     if out2d:
         grid_id_arr = np.reshape(grid_id,xyid.shape)
         grid_xid_arr = np.reshape(grid_xid,xyid.shape)
         grid_yid_arr = np.reshape(grid_yid,xyid.shape)
-        
+
         xc_arr = np.reshape(xc,xyid.shape)
         yc_arr = np.reshape(yc,xyid.shape)
         xv_arr = np.stack((np.reshape(xv1,xyid.shape), \
@@ -417,15 +411,15 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
         area_arr = area[masked]
         mask_arr = landmask[masked]
         landfrac_arr = landfrac[masked]
- 
-    # 
+
+    #
     # output arrays
     subdomain = {}
     subdomain['X_axis'] = X_axis
     subdomain['Y_axis'] = Y_axis
     subdomain['XX'] = XX
     subdomain['YY'] = YY
-            
+
     subdomain['gridID']  = grid_id_arr
     subdomain['gridXID'] = grid_xid_arr
     subdomain['gridYID'] = grid_yid_arr
@@ -436,7 +430,7 @@ def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc
     subdomain['area'] = area_arr
     subdomain['mask'] = mask_arr
     subdomain['frac'] = landfrac_arr
-        
+
     file_name = input_pathfile+'_remeshed'
     print("new domain file is " + file_name)
     domain_ncwrite(subdomain, WRITE2D=out2d, ncfile=file_name, \
@@ -462,7 +456,7 @@ def domain_remask(input_pathfile='./share/domains/domain.lnd.r05_RRSwISC6to18E3r
     '''
 
     from watershed_workflow.elm_gridlocator import grids_nearest_or_within
-    
+
     srcnc = nc.Dataset(input_pathfile, 'r')
     src_grids = {}
     src_grids['xc'] = srcnc['xc'][...]
@@ -471,36 +465,59 @@ def domain_remask(input_pathfile='./share/domains/domain.lnd.r05_RRSwISC6to18E3r
         and 'yv' in srcnc.variables.keys():
         src_grids['xv'] = srcnc['xv'][...]
         src_grids['yv'] = srcnc['yv'][...]
+        nv = src_grids['xv'].shape[-1]
         remask_approach = 'within'
+
+        '''        
+        if np.isnan(src_grids['xv']).any() or np.isnan(src_grids['yv']).any():
+            xc=np.mean(src_grids['xv'],axis=-1)
+            yc=np.mean(src_grids['yv'],axis=-1)
+            idx = np.where((np.isnan(xc) | (np.isnan(yc))))
+            x=np.delete(src_grids['xc'],idx)
+            src_grids['xc']=np.reshape(x,(1,x.size))  # have to do so to maintain shape not changed
+            y=np.delete(src_grids['yc'],idx)
+            src_grids['yc']=np.reshape(y,(1,y.size))
+            for v in range(nv):
+                x=np.delete(src_grids['xv'][...,v],idx)
+                x=np.reshape(x,(1,x.size,1))
+                y=np.delete(src_grids['yv'][...,v],idx)
+                y=np.reshape(x,(1,y.size,1))
+                if v==0:
+                    xv=x
+                    yv=y
+                else:
+                    xv=np.dstack([xv,x])  # to maintain shape of data
+                    yv=np.dstack([yv,y])
+            src_grids['xv'] = xv
+            src_grids['yv'] = yv
+            '''            
+                    
     else:
         remask_approach = 'nearest'
-    
+
     subdomain, boxed_idx, grids_uid, grids_maskptsid = grids_nearest_or_within( \
                     src_grids=src_grids, masked_pts=masked_pts, \
                     remask_approach = remask_approach, \
                     unlimit_xmin=unlimit_xmin, unlimit_xmax=unlimit_xmax, \
                     unlimit_ymin=unlimit_ymin, unlimit_ymax=unlimit_ymax,\
                     out2d=out2d, reorder_src=reorder_src, keep_duplicated=keep_duplicated)
-     
+
     if reorder_src and keep_duplicated:
         # in this case, sub-domain's xc/yc pair should be using those of masked_pts rather than of src_grids
         if 'xc' in masked_pts.keys(): subdomain['xc'] = masked_pts['xc']
         if 'yc' in masked_pts.keys(): subdomain['yc'] = masked_pts['yc']
         if 'xv' in masked_pts.keys(): subdomain['xv'] = masked_pts['xv']
         if 'yv' in masked_pts.keys(): subdomain['yv'] = masked_pts['yv']
-        if 'km2perpt' in masked_pts.keys(): 
+        if 'km2perpt' in masked_pts.keys():
             subdomain['area_km2']=masked_pts['km2perpt']
-        elif 'area_km2' in masked_pts.keys(): 
+        elif 'area_km2' in masked_pts.keys():
             subdomain['area_km2']=masked_pts['area_km2']
-        else:
-            subdomain['area_km2']=np.empty_like(subdomain['xc'])  
-                
 
     # re-do frac of landed mask, if option ON, i.e. pts in a source grid are km2 of land
     landfrac = srcnc['frac'][...]
     if 'km2perpt' in masked_pts.keys() and not reorder_src:
         km2perpt = masked_pts['km2perpt']
-    
+
         # grid area in km2, assuming a rectangle grid (TODO - refining this later)
         yc = srcnc['yc'][...].flatten()
         kmratio_lon2lat = np.cos(np.radians(yc))
@@ -508,10 +525,10 @@ def domain_remask(input_pathfile='./share/domains/domain.lnd.r05_RRSwISC6to18E3r
         xv = subdomain['xv']; yv = subdomain['yv']
         xv0=xv[...,0];xv1=xv[...,1]; xv2=xv[...,2];xv3=xv[...,3]
         yv0=yv[...,0];yv1=yv[...,1]; yv2=yv[...,2];yv3=yv[...,3]
-        xside_km = (abs(xv0-xv1)+abs(xv2-xv3))/2.0*(math.pi*re_km/180.0)   # 
+        xside_km = (abs(xv0-xv1)+abs(xv2-xv3))/2.0*(math.pi*re_km/180.0)   #
         yside_km = (abs(yv0-yv2)+abs(yv1-yv3))/2.0*(math.pi*re_km/180.0*kmratio_lon2lat)
-        area_km2 = xside_km*yside_km     
-    
+        area_km2 = xside_km*yside_km
+
         frac = landfrac.flatten()
         for i in range(len(grids_uid)):
             igrid = grids_uid[i]
@@ -520,8 +537,8 @@ def domain_remask(input_pathfile='./share/domains/domain.lnd.r05_RRSwISC6to18E3r
         landarea_km2=area_km2.reshape(landfrac.shape)
         landfrac = frac.reshape(landfrac.shape)
         landfrac[np.where(landfrac>1.0)]=1.0
-    
-    # truncked landmask, fraction, and area 
+
+    # truncked landmask, fraction, and area
     landmask = srcnc['mask'][...][boxed_idx]
     landmask[...] = 0 # remasked
     landmask[np.where(subdomain['remasked'])]= 1
@@ -530,7 +547,7 @@ def domain_remask(input_pathfile='./share/domains/domain.lnd.r05_RRSwISC6to18E3r
     # in case landmask changed to 0, i.e. NOT a land cell, better reassign its fraction to 0
     # but not do so on 'area' which are for a whole grid
     landfrac[landmask==0] = 0.0
-    
+
     landarea=srcnc['area'][...][boxed_idx]
     if 'area_km2' in srcnc.variables.keys(): landarea_km2=srcnc['area_km2'][...][boxed_idx]
     if 'area_LAEA' in srcnc.variables.keys(): landarea_km2=srcnc['area_LAEA'][...][boxed_idx]
@@ -668,7 +685,7 @@ def domain_subsetbylatlon(srcdomain_pathfile='./share/domains/domain.lnd.r05_RRS
                       masked_pts=mask_new, reorder_src=reorder_src, keep_duplicated=keep_duplicated, \
                       out2d=out2D, out=out_type)
             
-    # 
+    #
 #--------------------------------------------------------------------------------------------------------
 
 ''' 
@@ -843,10 +860,10 @@ def ncdata_subsetbynpwhereindex(npwhere_indices, npwhere_mask=np.empty((0,0)), n
                                         ix_mask = ix_mask+1
                             else:
                                 newidx = newidx+(slice(None),)
-                                               
+
                     varvals = src[vname][...][newidx]
                     #
-                   
+
                 else:
                     varvals = src[vname][...]
                     #
@@ -877,15 +894,16 @@ def ncdata_subsetbynpwhereindex(npwhere_indices, npwhere_mask=np.empty((0,0)), n
     #
 #
 #--------------------------------------------------------------------------------------------------------
-   
-    
+
+
 #--------------------------------------------------------------------------------------------------------
-  
+
 def refine_surfdata(outdir='./', \
-                    lnd_domain_file='../domain.lnd.r05_RRSwISC6to18E3r5.240328.nc', \
+                    lnd_domain_file='domain.lnd.r05_RRSwISC6to18E3r5.240328.nc', \
                     fsurdat='surfdata_0.5x0.5_simyr1850_c240308_TOP.nc', \
                     flanduse_timeseries='landuse.timeseries_0.5x0.5_hist_simyr1850-2015_c240308.nc', \
-                    userdomain='./domain.lnd.2687x1pt.coweeta.nc'):
+                    userdomain='./domain.lnd.2687x1pt.coweeta.nc', \
+                    domain_included=False):
 
     import glob
     try:
@@ -894,52 +912,63 @@ def refine_surfdata(outdir='./', \
     except ImportError:
         HAS_MPI4PY=False
 
-    #inputs
+    #inputs of standard E3SM datasets
     e3sm_inputdata_root = DIN_LOC_ROOT
     if not e3sm_inputdata_root.endswith('/'):
         e3sm_inputdata_root=e3sm_inputdata_root+'/'
-    fsurdat_path= os.path.join(e3sm_inputdata_root, \
-                            'lnd/clm2/surfdata_map')                         
-    lnd_domain_pathfile = os.path.join(e3sm_inputdata_root, \
+
+    if not fsurdat.startswith('./'):
+        fsurdat_path= os.path.join(e3sm_inputdata_root, \
+                            'lnd/clm2/surfdata_map')
+    else:
+        # relative to current workdir
+        fsurdat_path = os.path.abspath(fsurdat)
+
+    if not lnd_domain_file.startswith('./'):
+        # treated as in standard E3SM inputdata structure
+        lnd_domain_pathfile = os.path.join(e3sm_inputdata_root, \
                             'share/domains/domain.clm', \
                             lnd_domain_file)
-    
+    else:
+        # relative to current workdir
+        lnd_domain_pathfile = os.path.abspath(lnd_domain_file)
+
     #outputs
     output_path = './'
     SUBDOMAIN_REORDER = True  # True: masked file re-ordered by userdomain below, otherwise only mask and trunck
     KEEP_DUPLICATED = True
-    
+
     # a domain.nc to aim to generate a new domain and surfdata
     # userdomain = './domain.lnd.2687x1pt.coweeta.nc'
     # user-grid area in km^2
-    km2perpt = [] 
+    km2perpt = []
     lats=[]
     lons=[]
     #userdomain = './zone_mappings.txt' # OR, using a lat/lon paired pt list.
     #km2perpt = 1.0 # user-grid area in km^2
-    # e.g. 
+    # e.g.
     #  [f9y@baseline-login3 atm_forcing.datm7.GSWP3.0.5d.v2.c180716_ngee4]$ cat info_TFS_meq2_sites.txt 
     #    site_name lat lon km2(optional)
     #    MEQ2-MAT 68.6611 -149.3705 1.0
     #    MEQ2-DAT 68.607947 -149.401596 1.0
     #    MEQ2-PF 68.579315 -149.442279 1.0
-    #    MEQ2-ST 68.606131 -149.505794 1.0   
+    #    MEQ2-ST 68.606131 -149.505794 1.0
     if userdomain.endswith('.txt'):
         with open(userdomain) as f:
-            dtxt=f.readlines()            
+            dtxt=f.readlines()
             dtxt=filter(lambda x: x.strip(), dtxt)
             for d in dtxt:
                 allgrds=np.array(d.split()[1:],dtype=float)
                 lons.append(allgrds[1])
                 lats.append(allgrds[0])
-                if len(allgrids)==3: km2perpt.append(allgrids[2]) # optional
-                
+                if len(allgrds)==3: km2perpt.append(allgrds[2]) # optional
+
         f.close()
         lons = np.asarray(lons)
         lats = np.asarray(lats)
         km2perpt = np.asarray(km2perpt)
-    
-        
+
+
     # continue for subsetting, if option is ON
     if userdomain.endswith('.nc'):
         idx_box, newmask_box, newfrac_box, newxc_box, newyc_box, newkm2_box = \
@@ -950,28 +979,30 @@ def refine_surfdata(outdir='./', \
             keep_duplicated=KEEP_DUPLICATED, \
             #unlimit_xmin=True, unlimit_xmax=True, unlimit_ymax=True, \
             out2D=False, out_type='mask')
-    
-    elif (len(lats)>0 and len(lat)==len(lons)):
-        idx_box, newmask_box, newfrac_box, newxc_box, newyc_box = \
+
+    elif (len(lats)>0 and len(lats)==len(lons)):
+        idx_box, newmask_box, newfrac_box, newxc_box, newyc_box, newkm2_box = \
             domain_subsetbylatlon( \
-            srcdomain_pathfile=inputdomain_ncfile,  \
-            latlons=np.asarray([lats, lons]), reorder_src=SUBDOMAIN_REORDER, \
+            srcdomain_pathfile=lnd_domain_pathfile,  \
+            latlons=np.asarray([lats, lons]), \
+            reorder_src=SUBDOMAIN_REORDER, \
             keep_duplicated=KEEP_DUPLICATED, \
             out2D=False, out_type='mask')
-        # in this case, only lat/lon paired points are provided.
-        newkm2_box = np.empty((0,0))
 
     #
     allncfiles = [os.path.join(fsurdat_path,fsurdat)]
-    if flanduse_timeseries!=None: 
+    if flanduse_timeseries!=None:
         allncfiles.append(os.path.join(fsurdat_path,flanduse_timeseries))
+    if domain_included:
+        allncfiles.append(lnd_domain_pathfile)
+
     allncout = []
     for ncfile in allncfiles:
         if ncfile=='': continue
-        
+
         ncfile_dims = ['lsmlat', 'lsmlon']
         dims_new =''
-        
+
         srfnc = nc.Dataset(ncfile)
         if 'surfdata' in ncfile or 'landuse' in ncfile:
             # the following is for surfdata, standard grid dims are ['lsmlat', 'lsmlon'], 
@@ -979,14 +1010,14 @@ def refine_surfdata(outdir='./', \
             if 'gridcell' in srfnc.dimensions.keys():
                 ncfile_dims = ['gridcell']
             dims_new= 'gridcell' # if want to reduce dimensions to single and given a new dimension
-        
-        elif 'domain' in ncfile: 
+
+        elif 'domain' in ncfile:
             ncfile_dims = ['nj', 'ni']
             dims_new = '' 
             # if no change of dimensions, but will force dimension len to be 1, 
             # except the last which will be total unmasked grid number
             # (TODO - maybe another option of masked only?)
-        
+
         else:
             print('NO subsetting done for surfdata, domain, or forcing data - file NOT exists')
             return
@@ -1001,14 +1032,23 @@ def refine_surfdata(outdir='./', \
         #
         if outdir!='./': os.rename(fout, os.path.join(outdir,fout))
         allncout.append(os.path.join(outdir,fout))
-    
+
     # output files
     return allncout
-    
-'''    
+
+'''
 if __name__ == '__main__':
-    set_e3sm_input('/Users/f9y/e3sm_inputdata')
-    allout = refine_surfdata(userdomain='./domain.lnd.2683x1pt_US-coweeta.nc')
+    set_e3sm_input('/Users/f9y/project_ww_elmats/test-e3sm-inputdata')
+    #allout = refine_surfdata(userdomain='./domain.lnd.2683x1pt_US-coweeta.nc')
+
+    # extrac a pt of domain/surfdata
+    allout = refine_surfdata( \
+                    lnd_domain_file='domain.lnd.1761x1pt_gcrew-atselm.nc', \
+                    fsurdat='surfdata_1761x1pt_simyr1850_gcrew-atselm.nc', \
+                    flanduse_timeseries=None, \
+                    userdomain='test_extract_pts.txt', \
+                    domain_included=True)
+
     print(allout)
 #    zisois, dzsois, zsoil =  soilcolumn(more_vertlayers=True, nlevgrnd=15)   
 '''
