@@ -1155,7 +1155,7 @@ m3.writeExodus(output_filenames['mesh'])
 #--- #------ VIII-1. ATS-ready formats
 
 # download the data -- note it is hourly!
-met_data_raw = sources['meteorology'].getDataset(watershed.exterior, crs, start_leap, end_leap)
+met_data_raw = sources['meteorology'].getDataset(watershed.exterior.buffer(500), crs, start_leap, end_leap)
 
 # convert it to daily mean immediately
 met_data_raw_daily = met_data_raw.resample(time=datetime.timedelta(hours=24)).mean()
@@ -1167,7 +1167,7 @@ print(f'Total days: {len(met_data_raw_daily["time"])}')
 
 # AORC is a non-projected dataset in lat-lon
 # warp it to projected
-met_data_warped = watershed_workflow.warp.dataset(met_data_raw_daily, crs, 'bilinear')
+met_data_warped = watershed_workflow.warp.dataset(met_data_raw_daily, crs, 'nearest')
 
 # convert and write ATS format for transient run
 met_data_transient = watershed_workflow.meteorology.convertAORCToATS(met_data_warped)

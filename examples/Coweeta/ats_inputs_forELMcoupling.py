@@ -1150,7 +1150,7 @@ m3.writeExodus(output_filenames['mesh'])
 #--- #------ VIII-1. ATS-ready formats
 
 # download the data -- note it is hourly!
-met_data_raw = sources['meteorology'].getDataset(watershed.exterior, crs, start_leap, end_leap)
+met_data_raw = sources['meteorology'].getDataset(watershed.exterior.buffer(500), crs, start_leap, end_leap)
 
 # convert it to daily mean immediately
 met_data_raw_daily = met_data_raw.resample(time=datetime.timedelta(hours=24)).mean()
