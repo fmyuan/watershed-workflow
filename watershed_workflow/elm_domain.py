@@ -981,13 +981,15 @@ def refine_surfdata(outdir='./', \
             out2D=False, out_type='mask')
 
     elif (len(lats)>0 and len(lats)==len(lons)):
-        idx_box, newmask_box, newfrac_box, newxc_box, newyc_box, newkm2_box = \
+        idx_box, newmask_box, newfrac_box, newxc_box, newyc_box = \
             domain_subsetbylatlon( \
             srcdomain_pathfile=lnd_domain_pathfile,  \
             latlons=np.asarray([lats, lons]), \
             reorder_src=SUBDOMAIN_REORDER, \
             keep_duplicated=KEEP_DUPLICATED, \
             out2D=False, out_type='mask')
+            
+        newkm2_box=np.empty((0,0))
 
     #
     allncfiles = [os.path.join(fsurdat_path,fsurdat)]
@@ -1036,19 +1038,20 @@ def refine_surfdata(outdir='./', \
     # output files
     return allncout
 
-'''
+''''''
 if __name__ == '__main__':
-    set_e3sm_input('/Users/f9y/project_ww_elmats/test-e3sm-inputdata')
+    #set_e3sm_input('/Users/f9y/project_ww_elmats/test-e3sm-inputdata')
+    set_e3sm_input('/Users/f9y/e3sm_inputdata')
     #allout = refine_surfdata(userdomain='./domain.lnd.2683x1pt_US-coweeta.nc')
 
     # extrac a pt of domain/surfdata
     allout = refine_surfdata( \
-                    lnd_domain_file='domain.lnd.1761x1pt_gcrew-atselm.nc', \
-                    fsurdat='surfdata_1761x1pt_simyr1850_gcrew-atselm.nc', \
-                    flanduse_timeseries=None, \
+                    lnd_domain_file='domain.lnd.r05_RRSwISC6to18E3r5.240328_cavm1d.nc', \
+                    fsurdat='surfdata_0.5x0.5_simyr1850_c240308_TOP_cavm1d.nc', \
+                    flanduse_timeseries='landuse.timeseries_0.5x0.5_hist_simyr1850-2015_c240308_cavm1d.nc', \
                     userdomain='test_extract_pts.txt', \
                     domain_included=True)
 
     print(allout)
 #    zisois, dzsois, zsoil =  soilcolumn(more_vertlayers=True, nlevgrnd=15)   
-'''
+''''''

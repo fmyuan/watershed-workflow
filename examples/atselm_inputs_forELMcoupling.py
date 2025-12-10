@@ -198,11 +198,11 @@ ignore_small_rivers = 2         # remove rivers with fewer than this number of r
 prune_by_area_fraction = 0.01   # prune any reaches whose contributing area is less than this fraction of the domain
 
 # -- mesh triangle refinement control
-refine_d0 = 200
-refine_d1 = 600
+refine_d0 = 100
+refine_d1 = 300
 
-refine_L0 = 50   # this is very sensative to cell number
-refine_L1 = 200
+refine_L0 = 40   # this is very sensative to cell number
+refine_L1 = 100
 
 refine_A0 = refine_L0**2 / 2
 refine_A1 = refine_L1**2 / 2
@@ -289,6 +289,10 @@ watershed.plot()
 #--- III-2. the Rivers
 # download/collect the river network within that shape's bounds
 reaches = sources['hydrography'].getShapesByGeometry(watershed.exterior, crs, out_crs=crs)
+
+# reach 0 is cross a road, which out of bounds. Drop it manually
+reaches=reaches.drop(0)
+
 rivers = watershed_workflow.river_tree.createRivers(reaches, method='hydroseq')
 
 watershed_orig, rivers_orig = watershed, rivers
