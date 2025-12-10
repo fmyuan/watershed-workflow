@@ -801,7 +801,7 @@ print(f'total thickness: {dtb_max} m')
 #--- VII-1. Generate a dz structure for the top 2m of soil
 #
 
-if ELM_SOILCOLUMN:
+if ELM_SOILCOLUMN:	
 #---	# VII-1A. dz structure from ELM soil column
 	zi_soil, dzs_soil, z_soil = elm_domain.soilcolumn(more_vertlayers=MORE_VERTLAYERS, nlevgrnd=15)   
 	dzs_soil = dzs_soil[1:] # in ELM, layer indexing from 1. So need to do something here.
