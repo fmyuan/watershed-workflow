@@ -430,16 +430,16 @@ if ELM_SOILCOLUMN:
 	doy = 364
 	layer = 0
 	if elmvar in ncfid.variables:
-		m2.cell_data[elmvar] = ncfid.variables[elmvar].to_numpy()[doy,layer,:]
-		elmvar_unit = ncfid.variables[elmvar].attrs['units'].split('(')[0]
+		m2.cell_data[elmvar] = ncfid.variables[elmvar].to_numpy()[doy,layer,:]*(-1.e6)
+		elmvar_unit = 'Pa'#ncfid.variables[elmvar].attrs['units'].split('(')[0]
 
 		# simply plotting
 		#elmvar_gons = m2.plot(facecolors=m2.cell_data[elmvar], cmap='RdBu', edgecolors=None)
 		fig, ax = plt.subplots()
 
-		mp = m2.plot(facecolors=m2.cell_data[elmvar], edgecolors='white', cmap='RdBu', ax=ax, linewidth=0.1, colorbar=False)
-		cbax = fig.add_axes([0.05,0.05,0.9,0.05])
-		cbar = fig.colorbar(mp, orientation="horizontal", cax=cbax)
+		mp = m2.plot(facecolors=m2.cell_data[elmvar], edgecolors=None, cmap='rainbow', ax=ax, linewidth=0.01, colorbar=False)
+		cbax = fig.add_axes([0.85,0.60,0.04,0.35])
+		cbar = fig.colorbar(mp, orientation="vertical", cax=cbax)
 		cbar.ax.set_title(elmvar+ ' ('+elmvar_unit+')')
 
 		ax.set_title('grided ELM output: '+elmvar+ '@DOY - '+str(doy))

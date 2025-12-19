@@ -5,8 +5,62 @@ import glob
 import numpy as np
 from netCDF4 import Dataset
 
-from watershed_workflow.elm_ncoperator import putvar
+#----------------------------------------------------------------------------             
+def putvar(ncfile, varname, varvals, varatts=''):
+    # varatts: 'varname::att=att_val; varname::att=att_val; ...'
+    try:
+        f = Dataset(ncfile,'r+')
+        #
+        if varname=="": 
+            print('FILE: '+ncfile+' Variable(s) is(are): ')
+            for key in f.variables.keys(): 
+                print (key)
+            return -1
+        #
+        else:
+            if varatts!='':
+                varatts=varatts.split(";")
+                for varatt in varatts:
+                    v=varatt.split('::')[0].strip()
+                    att=varatt.split('::')[1].strip().split('=')[0]
+                    att_val=varatt.split('::')[1].strip().split('=')[1]
+                    if (att=='add_offset' or att=='scale_factor'):
+                        # this must be done before data written, 
+                        # otherwise the written would use the original add_offset and scale_factor
+                        # TIP: when data written, the input valule is in unpacked and the program will do packing
+                        f.variables[v].setncattr(att,float(att_val))
+                    else:
+                        f.variables[v].setncattr(att,att_val)
 
+            
+            if isinstance(varvals, dict): #multiple dataset for corresponding same numbers of varname
+                for v in varname:
+                    if v in f.variables.keys():
+                        if f.variables[v].dtype!=float:
+                            val=np.ma.masked_where(np.isnan(varvals[v]), varvals[v])
+                        else:
+                            val=np.copy(varvals[v])
+                        f.variables[v][...]=val
+            else:                        #exactly 1 dataset in np.array for 1 varname
+                v=varname[0]
+                if v in f.variables.keys():
+                    if f.variables[v].dtype!=float or \
+                      (f.variables[v].dtype!=np.float64 or f.variables[v].dtype!=np.float32):
+                        # nan is not dtype of integers
+                        val=np.ma.masked_where(np.isnan(varvals), varvals)
+                    else:
+                        val=np.copy(varvals)
+                    f.variables[v][...]=val
+            #
+            f.sync()
+            f.close()
+            
+            return 0
+
+    except:
+        return -2
+
+#----------------------------------------------------------------------------  
 def elm_metdata_write(options, metdata, time_dim=0):
     
     """

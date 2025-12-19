@@ -262,179 +262,6 @@ def domain_ncwrite(elmdomain_data, WRITE2D=True, ncfile='domain.nc', coord_syste
 
     w_nc_fid.close()  # close the new file
 
-def domain_remeshbycentroid(input_pathfile='./share/domains/domain.clm/domain.nc', 
-                     LONGXY360=False, edge_wider=1.0, out2d=False, ncwrite_coords=True):
-    '''
-    re-meshing ELM domain grids, by providing centroids
-        input_pathfile - source ELM domain nc file, with required variables of 'xc', 'yc', 'xv', 'yv', 'mask','frac'
-                         grid system is lat/lon with dimension names of (nj, ni) of nj for latitude and ni for longitude
-        LONGXY360      - true if longitude from 0-360; otherwise -180 ~ 180
-        edge_wider     - in case need to have a user-defined wider edges of domain
-        out2d          - output data in 2D or flatten (so-called unstructured)
-        ncwrite_coords - when output type is 'domain_ncwrite', write coordinates and info OR not
-    '''
-
-    #
-    # Open the source domain or surface nc file,
-    # from which trunked a box with limits of [mask_yc,mask_xc]
-    src = nc.Dataset(input_pathfile, 'r')
-    # points = [y,x] coordinates for src's grid
-    if 'domain' in input_pathfile:
-        # directly from an ELM domain nc file
-        src_yc = src.variables['yc'][...]
-        src_xc = src.variables['xc'][...]
-        src_xv = src.variables['xv'][...]
-        src_yv = src.variables['yv'][...]
-        #nv dim position
-        nvdim = src.variables['xv'].dimensions.index('nv')
-        nv = src.variables['xv'].shape[nvdim]
-
-        src_mask = src.variables['mask'][...]
-        src_area = src.variables['area'][...]
-        src_landfrac = src.variables['frac'][...]
-
-    elif 'surfdata' in input_pathfile:
-        # redo domain from an ELM surface data file
-        src_yc = src.variables['LONGXY'][...]
-        src_xc = src.variables['LATIXY'][...]
-
-        src_mask = src.variables['LANDFRAC_MASK'][...]
-        src_area = src.variables['AREA'][...] # needs to convert from km^2 to rad^2
-        src_landfrac = src.variables['LANDFRAC_PFT'][...]
-
-    else:
-        print('Source domain file should be either a "domain*.nc" or a "surfdata*.nc" ')
-        os.sys.exit(-1)
-
-    if not LONGXY360:
-        src_xc[src_xc>=180.0] = src_xc[src_xc>=180.0]-360.0
-        src_xv[src_xv>=180.0] = src_xv[src_xv>=180.0]-360.0
-    else:
-        src_xc[src_xc<0.0]=360+src_xc[src_xc<0.0]
-        src_xv[src_xv<0.0]=360+src_xv[src_xv<0.0]
-
-    landmask = src_mask
-    landfrac = src_landfrac
-    area = src_area
-    xc = src_xc
-    yc = src_yc
-    #yv = []; xv = []
-    #if nvdim==0: # nv dim may be in the first or the last
-    #    for iv in range(nv+1):
-    #        yv[iv] = src_yv[iv,...]; xv[iv] = src_xv[iv,...]
-    #else:
-    #    for iv in range(nv+1):
-    #        yv[iv] = src_yv[...,iv]; xv1 = src_xv[...,iv]
-
-    # re-meshing, by new mesh-griding with xc/yc as centroids
-    X_axis = xc
-    Y_axis = yc
-    [X_axis, i] = np.unique(X_axis, return_inverse=True)
-    [Y_axis, j] = np.unique(Y_axis, return_inverse=True)
-    YY, XX = np.meshgrid(Y_axis, X_axis, indexing='ij')
-    xid = np.indices(XX.shape)[1]
-    yid = np.indices(XX.shape)[0]
-    xyid = np.indices(XX.flatten().shape)[0]
-    xyid = np.reshape(xyid, xid.shape)
-
-    # indices of original grids in new-XX/YY coordinate system
-    if (1 not in src_xc.shape):
-        # structured grids yc[nj,ni], xc[nj,ni]
-        # new indices of [yc,xc] in grid-mesh YY/XX
-        # note: here don't override xc,yc, so xc=X_axis[i], yc=Y_axis[j]
-        polygonized = np.isin(XX, X_axis[i]) & np.isin(YY, Y_axis[j])
-        ji = np.nonzero(polygonized)
-        grid_xid = xid[ji]
-        grid_yid = yid[ji]
-        grid_id = xyid[ji]
-
-    else:
-        # unstructured  yc[1,ni], xc[1,ni]
-        # new indices of paired [yc,xc] in grid-mesh YY/XX
-        grid_xid = xid[j,i]
-        grid_yid = yid[j,i]
-        grid_id = xyid[j,i]
-    #
-
-    # new grid vertices, middle of neiboured centroids
-    if len(X_axis)>1:
-        xdiff = np.diff(X_axis)/2.0
-    else:
-        xdiff = (max(src_xv)-min(src_xv))/2.0
-    xdiff = np.insert(xdiff,0, xdiff[0]*edge_wider)
-    xv=np.append(X_axis-xdiff,X_axis[-1]+xdiff[-1]*edge_wider)  # new X bounds for grids
-    if len(Y_axis)>1:
-        ydiff = np.diff(Y_axis)/2.0
-    else:
-        ydiff = (max(src_yv)-min(src_yv))/2.0
-    ydiff = np.insert(ydiff,0,ydiff[0]*edge_wider)
-    yv=np.append(Y_axis-ydiff,Y_axis[-1]+ydiff[-1]*edge_wider)  # new Y bounds for grids
-    # re-fill vertices
-    yvv, xvv = np.meshgrid(yv[:-1], xv[:-1], indexing='ij')  # left-lower vertice
-    xv1 = xvv[(grid_yid,grid_xid)]; yv1 = yvv[(grid_yid,grid_xid)]
-    yvv, xvv = np.meshgrid(yv[:-1], xv[1:], indexing='ij')   # right-lower vertice
-    xv2 = xvv[(grid_yid,grid_xid)]; yv2 = yvv[(grid_yid,grid_xid)]
-    yvv, xvv = np.meshgrid(yv[1:], xv[1:], indexing='ij')    # right-upper vertice
-    xv3 = xvv[(grid_yid,grid_xid)]; yv3 = yvv[(grid_yid,grid_xid)]
-    yvv, xvv = np.meshgrid(yv[1:], xv[:-1], indexing='ij')   # left-upper vertice
-    xv4 = xvv[(grid_yid,grid_xid)]; yv4 = yvv[(grid_yid,grid_xid)]
-
-    # to 2D but masked
-    if out2d:
-        grid_id_arr = np.reshape(grid_id,xyid.shape)
-        grid_xid_arr = np.reshape(grid_xid,xyid.shape)
-        grid_yid_arr = np.reshape(grid_yid,xyid.shape)
-
-        xc_arr = np.reshape(xc,xyid.shape)
-        yc_arr = np.reshape(yc,xyid.shape)
-        xv_arr = np.stack((np.reshape(xv1,xyid.shape), \
-                           np.reshape(xv2,xyid.shape), \
-                           np.reshape(xv3,xyid.shape), \
-                           np.reshape(xv4,xyid.shape)), axis=2)
-        yv_arr = np.stack((np.reshape(yv1,xyid.shape), \
-                           np.reshape(yv2,xyid.shape), \
-                           np.reshape(yv3,xyid.shape), \
-                           np.reshape(yv4,xyid.shape)), axis=2)
-        area_arr = np.reshape(area,xyid.shape)
-        mask_arr = np.reshape(landmask,xyid.shape)
-        landfrac_arr = np.reshape(landfrac,xyid.shape)
-    else:
-    # to 1D only masked
-        masked = np.where((landmask==1))
-        grid_id_arr = grid_id[masked]
-        grid_xid_arr = grid_xid[masked]
-        grid_yid_arr = grid_yid[masked]
-        xc_arr = xc[masked]
-        yc_arr = yc[masked]
-        xv_arr = np.stack((xv1[masked],xv2[masked],xv3[masked],xv4[masked]), axis=1)
-        yv_arr = np.stack((yv1[masked],yv2[masked],yv3[masked],yv4[masked]), axis=1)
-        area_arr = area[masked]
-        mask_arr = landmask[masked]
-        landfrac_arr = landfrac[masked]
-
-    #
-    # output arrays
-    subdomain = {}
-    subdomain['X_axis'] = X_axis
-    subdomain['Y_axis'] = Y_axis
-    subdomain['XX'] = XX
-    subdomain['YY'] = YY
-
-    subdomain['gridID']  = grid_id_arr
-    subdomain['gridXID'] = grid_xid_arr
-    subdomain['gridYID'] = grid_yid_arr
-    subdomain['xc'] = xc_arr
-    subdomain['yc'] = yc_arr
-    subdomain['xv'] = xv_arr
-    subdomain['yv'] = yv_arr
-    subdomain['area'] = area_arr
-    subdomain['mask'] = mask_arr
-    subdomain['frac'] = landfrac_arr
-
-    file_name = input_pathfile+'_remeshed'
-    print("new domain file is " + file_name)
-    domain_ncwrite(subdomain, WRITE2D=out2d, ncfile=file_name, \
-                       coord_system=ncwrite_coords)
 
 def domain_remask(input_pathfile='./share/domains/domain.lnd.r05_RRSwISC6to18E3r5.240328.nc', 
                      masked_pts={}, reorder_src=False, keep_duplicated=False, \
@@ -686,51 +513,7 @@ def domain_subsetbylatlon(srcdomain_pathfile='./share/domains/domain.lnd.r05_RRS
                       out2d=out2D, out=out_type)
             
     #
-#--------------------------------------------------------------------------------------------------------
 
-''' 
-subset an ELM domain.nc by user provided box of vertices of latlons[[lats],[lons]] (but only needs: xv, yv)
-'''
-def domain_subsetbybox(srcdomain_pathfile='./share/domains/domain.lnd.r05_RRSwISC6to18E3r5.240328.nc', \
-                          latlons=np.empty((0,0)), \
-                          out2D=True, out_type='subdomain'):
-
-    
-    # new masked domain pts in np.array [[lats],[lons]], but only two pairs (i.e. assuming a rectangle box)
-    if (latlons.shape[0]!=2 or latlons.shape[1]!=2):
-        print('latlons must have 2 paired location points of 4 vetices of a box: min/max y/x or latitude/longidue',latlons.shape[0])
-        return
-    
-    # src domain 
-    src_data = nc.Dataset(srcdomain_pathfile)
-    src_xc = src_data['xc'][...]
-    src_yc = src_data['yc'][...]
-    src_mask = src_data['mask'][...]
-    src_data.close()
-    xmin = min(latlons[1]); xmax=max(latlons[1])
-    ymin = min(latlons[0]); ymax=max(latlons[0])
-    xyidx = np.where((src_xc>xmin) & (src_xc<=xmax) & \
-                     (src_yc>ymin) & (src_yc<=ymax))
-    
-    mask_new = {}
-    mask_new['yc'] = src_yc[xyidx] # y or latitudes
-    mask_new['xc'] = src_xc[xyidx] # x or longitudes
-    mask_new['mask']= src_mask[xyidx]    
-    #
-    if out_type == 'subdomain':
-        return domain_remask(input_pathfile=srcdomain_pathfile, \
-                      masked_pts=mask_new, reorder_src=False, keep_duplicated=False, \
-                      out2d=out2D, out=out_type)
-    elif out_type == 'domain_ncwrite':
-        domain_remask(input_pathfile=srcdomain_pathfile, \
-                      masked_pts=mask_new, reorder_src=False, keep_duplicated=False, \
-                      out2d=out2D, out=out_type)
-    elif out_type == 'mask':
-        return domain_remask(input_pathfile=srcdomain_pathfile, \
-                      masked_pts=mask_new, reorder_src=False, keep_duplicated=False, \
-                      out2d=out2D, out=out_type)
-            
-    # 
 #--------------------------------------------------------------------------------------------------------
 
 def ncdata_subsetbynpwhereindex(npwhere_indices, npwhere_mask=np.empty((0,0)), npwhere_frac=np.empty((0,0)), \
@@ -1038,7 +821,7 @@ def refine_surfdata(outdir='./', \
     # output files
     return allncout
 
-''''''
+'''
 if __name__ == '__main__':
     #set_e3sm_input('/Users/f9y/project_ww_elmats/test-e3sm-inputdata')
     set_e3sm_input('/Users/f9y/e3sm_inputdata')
@@ -1054,4 +837,4 @@ if __name__ == '__main__':
 
     print(allout)
 #    zisois, dzsois, zsoil =  soilcolumn(more_vertlayers=True, nlevgrnd=15)   
-''''''
+'''

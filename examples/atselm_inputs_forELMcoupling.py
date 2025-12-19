@@ -367,7 +367,7 @@ m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers,
                                                             diagnostics=True)
 
 # prepartition to maintain ordering
-m2 = m2.partition(8, True)
+m2 = m2.partition(256, True)
 
 # get a raster for the elevation map, based on 3DEP
 #dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['dem']
@@ -375,7 +375,7 @@ m2 = m2.partition(8, True)
 # locally available raster DEM
 dem_raster = os.path.join(data_dir,'topography','ned19_n39x00_w076x75_md_dnr_lidar2004_gcrew.tif') 
 sources['DEM'] = watershed_workflow.sources.ManagerRaster(dem_raster)
-dem = sources['DEM'].getDataset(watershed.exterior.buffer(10), watershed.crs)['band_1']
+dem = sources['DEM'].getDataset(watershed.exterior.buffer(50), watershed.crs)['band_1']
 m2.cell_data['DEM'] = watershed_workflow.getDatasetOnMesh(m2, dem, method='linear')
 
 
@@ -423,7 +423,7 @@ watershed_workflow.condition.conditionRiverMesh(m2, rivers[0])
 
 # plotting surface mesh with elevations
 fig, ax = plt.subplots()
-ax2 = ax.inset_axes([0.65,0.05,0.3,0.5])
+ax2 = ax.inset_axes([0.85,0.03,0.25,0.40])
 cbax = fig.add_axes([0.05,0.02,0.9,0.04])
 
 mp = m2.plot(facecolors='elevation', edgecolors=None, ax=ax, linewidth=0.5, colorbar=False)
@@ -1048,12 +1048,13 @@ if ELM_SOILCOLUMN:
 
 
     # visualizing ELM data, as needed
-	elmvar = 'ORGANIC'
+	elmvar = 'SKY_VIEW'
 	if True:
-		m2.cell_data[elmvar] = surf_from_atsm2[elmvar][0,:]
+		#m2.cell_data[elmvar] = surf_from_atsm2[elmvar][0,:]
+		m2.cell_data[elmvar] = surf_from_atsm2[elmvar][:]
 
 		# simply plotting
-		elmvar_gons = m2.plot(facecolors=m2.cell_data[elmvar], cmap='RdBu', edgecolors=None)
+		elmvar_gons = m2.plot(facecolors=m2.cell_data[elmvar], cmap='rainbow', edgecolors=None, linewidth=0.01)
 		plt.show()
 
     #
