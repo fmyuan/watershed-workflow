@@ -1,0 +1,5 @@
+name: watershed_workflow_DEV-2026-01-22
+channels:
+dependencies:
+
+prefix: "/home/f9y/micromamba/envs/watershed_workflow_DEV-2026-01-22"
