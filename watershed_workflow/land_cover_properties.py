@@ -245,8 +245,16 @@ def applyCrosswalk(crosswalk: Dict[int, List[Tuple[int, float]]],
 
     for nlcd_id in unique_nlcd:
         cw = crosswalk[nlcd_id]
-        nlcd_lai[_nlcdName(nlcd_id)] = sum(part[1] * modis_lai[_modisName(part[0])].to_numpy()
-                                           for part in cw)
+        #nlcd_lai[_nlcdName(nlcd_id)] = sum(part[1] * modis_lai[_modisName(part[0])].to_numpy()
+        #                                   for part in cw)        
+        # unfortunately, when do rio.clip in 'computeTimeseries', modis_lai may be truncated by watershed bounds
+        # then, the above call may have error of non-existing _modisName.
+        if not _nlcdName(nlcd_id) in nlcd_lai.keys(): nlcd_lai[_nlcdName(nlcd_id)] = 0.0
+        for part in cw:
+            #print(_nlcdName(nlcd_id), _modisName(part[0]), _modisName(part[0]) in modis_lai.keys())
+            if not _modisName(part[0]) in modis_lai.keys(): continue            
+            nlcd_lai[_nlcdName(nlcd_id)] = nlcd_lai[_nlcdName(nlcd_id)] + \
+                part[1] * modis_lai[_modisName(part[0])].to_numpy()
 
     return nlcd_lai
 

@@ -157,6 +157,7 @@ class ManagerAORC(manager_dataset.ManagerDataset):
                                        start_year=start_year,
                                        end_year=end_year,
                                        temporal_resampling=temporal_resampling)
+        logging.info(f"  cached dataset file name: {filename}")
 
         # Superset check before downloading
         if not os.path.exists(filename) and not force:
