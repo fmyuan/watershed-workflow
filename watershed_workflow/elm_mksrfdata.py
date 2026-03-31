@@ -7,7 +7,64 @@ from pyproj import CRS
 
 import xarray as xr
 import rasterio
-from rasterio.transform import Affine
+import rioxarray
+from dask.array.linalg import lu
+
+#########################################################################################################
+
+#--- #----- I. ELM Grids/TopoUnits -----#
+
+# topographic features: slope, aspect, skyview factor
+# ---------------------------------------------------------------------
+def mksrfdata_topo_from_dem_aoi(dem_file, bbox_lb_ru, bbox_crs="EPSG:4326", bbox_outfile=''):
+    from rasterio.warp import transform_bounds
+    from rvt import vis as rvtvis
+    
+    # rio reading dem
+    with rioxarray.open_rasterio(dem_file, mask_and_scale=True) as src:
+    
+        if bbox_crs != src.rio.crs:
+            bounds = transform_bounds(bbox_crs, src.rio.crs, *bbox_lb_ru)
+        else:
+            bounds = bbox_lb_ru
+        elv_xr = src.rio.clip_box(bounds[0],bounds[1],bounds[2],bounds[3])
+        rio_nodata = src.rio.nodata
+        rio_res = np.asarray([np.mean(np.diff(elv_xr.y)), np.mean(np.diff(elv_xr.x))])    
+    del src
+    
+    # slope, aspect, and sky view factor (svf) derived from dem
+    elev = elv_xr[0].data
+    dem_mask = (elev==rio_nodata)        
+    sa = rvtvis.slope_aspect(elev, output_units="degree", no_data=rio_nodata)
+    slope = np.ma.array(sa['slope'], mask=dem_mask)
+    aspect = np.ma.array(sa['aspect'], mask=dem_mask)
+    svf = rvtvis.sky_view_factor(elev, resolution=abs(rio_res[0]), no_data=rio_nodata)
+    svf = np.ma.array(svf['svf'], mask=dem_mask)
+    
+    # multi-banded rioxarray
+    topo_xr = xarray.concat([elv_xr, elv_xr, elv_xr, elv_xr],
+                            dim='band')
+    topo_xr = topo_xr.assign_coords(band=[1,2,3,4])
+    topo_xr.loc[dict(band=2)] = slope
+    topo_xr.loc[dict(band=3)] = aspect
+    topo_xr.loc[dict(band=4)] = svf
+    #topo_xr.attrs['long_name']=['elevation','slope','aspect','svf']
+    
+    
+    # output raster
+    if bbox_outfile != '':
+        # the following will only save elevation data to raster. 
+        # there is an issue of converting all other data into integer, which not right in raster image.
+        topo_xr.loc[dict(band=1)].rio.to_raster(bbox_outfile, dtype=topo_xr.dtype, nodata=float('nan'))
+                         
+    return topo_xr
+
+#
+#
+
+#########################################################################################################
+
+#--- #----- II. ELM LandUnit and Patches, including PFT -----#
 
 # default PFT classes by ELM
 natural_pfts={'pftname':[
@@ -278,14 +335,21 @@ def mksrfdata_lupft_fromNLCD(fsurfnc_in, nlcd_xr, natvegLUonly=False,
     lu_sum100 = srf_lu_pft['PCT_NATVEG']+srf_lu_pft['PCT_CROP']+ \
             srf_lu_pft['PCT_LAKE']+srf_lu_pft['PCT_WETLAND']+ \
             srf_lu_pft['PCT_GLACIER']+np.sum(srf_lu_pft['PCT_URBAN'],axis=0)
+    if any(abs(lu_sum100-100.0)>1.0e-8):
+        print('Error: grid summed Land Units not 100%:', np.where(abs(lu_sum100-100.0)>1.0e-8))
+        exit(-1)
 
     pft_sum100 = np.sum(srf_lu_pft['PCT_NAT_PFT'],axis=0)
     if any(abs(pft_sum100-100.0)>1.0e-8):
-        print('Error: grid summed Land Units not 100%:', np.where(abs(pft_sum100-100.0)>1.0e-8))
+        print('Error: grid summed PCT_NAT_PFT not 100%:', np.where(abs(pft_sum100-100.0)>1.0e-8))
         exit(-1)
     
     return srf_lu_pft
     
+
+#########################################################################################################
+
+#--- #----- III. ELM Soils -----#
 
 #--- # downloading a boxed SoilGrid data (v2.0.1)
 # 
@@ -415,7 +479,10 @@ def mksrfdata_soilcolumn_interp(srf_soildata=np.empty((0)), srf_soilnode=np.empt
                                   kwargs={'fill_value': fill_method})        
         return interp_vert.as_numpy()
             
-#--- # 
+#########################################################################################################
+
+#--- #----- IV. Write/Update surfdata -----#
+#
 # 
 def mksrfdata_updatevals(fsurfnc_in, fsurfnc_out=None, \
                          user_srf_data={}, user_srfnc_file=None, user_srf_vars=None):
@@ -525,6 +592,9 @@ def mksrfdata_updatevals(fsurfnc_in, fsurfnc_out=None, \
     #
 #
 
+#########################################################################################################
+
+#--- #----- V. tests -----#
 #--------------------------------------------------------------------
 def test(surf_from_atsm2={}, surf_vars=''):
     input_path  = './'

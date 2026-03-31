@@ -158,6 +158,10 @@ def createRiversMesh(hucs : SplitHUCs,
     coords_gid_start = 0
     elems_gid_start = 0
 
+    # in case NO river at all
+    if rivers.empty:
+        return [], elems, corridors, hole_points, None
+
     for i,river in enumerate(rivers):
         # create the mesh
         lcoords, lelems = createRiverMesh(river, computeWidth, elems_gid_start)

@@ -560,8 +560,10 @@ def _triangulate(hucs : SplitHUCs,
 
         else:
             areas = np.array([watershed_workflow.utils.computeTriangleArea(*vertices[tri]) for tri in triangles])
+            distances = np.zeros_like(areas)
             logging.info("  min area = {}".format(areas.min()))
             logging.info("  max area = {}".format(areas.max()))
+            
 
             if verbosity > 0:
                 plt.figure()

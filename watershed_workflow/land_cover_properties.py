@@ -17,6 +17,7 @@ from watershed_workflow.crs import CRS
 
 from watershed_workflow.sources.manager_nlcd import colors as nlcd_colors
 from watershed_workflow.sources.manager_modis_appeears import colors as modis_colors
+from cmath import nan
 
 
 def computeTimeSeries(lai: xarray.DataArray,
@@ -62,7 +63,13 @@ def computeTimeSeries(lai: xarray.DataArray,
     
     lai_with_class = lai.assign_coords(class_=lc)
     lai_class_mean = lai_with_class.groupby('class_').mean(dim=stacked_space_dims)
-
+    # it's weired that 'mean' method gets some weired LAI values of 25.4 for nans in time-series in AK northern slope
+    null_ts = lai_class_mean.isnull().any(axis=1)
+    for (i, ilc) in enumerate(lai_class_mean['class_']): 
+        # iter over 'lc' and reset masked time-series points to nan
+        # since original 'lai' is not lc relevant, implying something incorrect when class-grouping
+        lai_class_mean[null_ts,i] = nan
+        
     # average lai for all pixels in the mask and of the lc type
     df = pd.DataFrame({watershed_workflow.sources.manager_modis_appeears.colors[int(ilc)][0] + ' LAI [-]' :
                        lai_class_mean[:,i] for (i,ilc) in enumerate(lai_class_mean['class_'])})
