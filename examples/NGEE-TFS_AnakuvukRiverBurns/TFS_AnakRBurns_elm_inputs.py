@@ -1,5 +1,5 @@
 """
-	Complete Workflow for generating ELM domain and surface data
+	Complete Workflow for generating ELM tri-domain and surface data
 		
 	It uses the following datasets:
 	
@@ -49,6 +49,7 @@ pd.options.display.max_columns = None
 
 import shutil
 from rvt import vis as rvtvis
+from shapely.geometry.geo import box
 
 #--- provide paths to relevant packages for mesh and input file generation 
 
@@ -191,7 +192,6 @@ refine_A0 = refine_L0**2 / 2
 refine_A1 = refine_L1**2 / 2
 
 # 
-refine_max_area = 1000*1000  # m2 (at most 1km resolution)
 
 # Simulation control
 start = cftime.DatetimeNoLeap(2003,1,1)  # modis LAI starts from 2002-07-04
@@ -206,14 +206,25 @@ max_vg_alpha = 1.e-3      # max value of van Genuchten's alpha -- our correlatio
 # a dictionary of output_filenames -- will include all filenames generated
 output_filenames = {}
 
-# Note that, by default, we tend to work in the DayMet CRS because this allows us to avoid
-# reprojecting meteorological forcing datasets.
-crs = watershed_workflow.crs.default_crs
+# Note that, by default, we tend to work in projected CRS
+if True:
+	crs = watershed_workflow.crs.default_crs
+	refine_max_edge_length = 1000 # m
+	refine_max_area = 750*750  # m2
+	refine_tol = 1.e-5
+	exterior_buff = 100
+else:
+	crs = watershed_workflow.crs.latlon_crs
+	refine_max_edge_length = 0.01 # latlon deg
+	refine_max_area = 0.01*0.01  # degxdeg
+	refine_tol = 1.e-5
+	exterior_buff = 1.e-4
 
-# get the shape and crs of the shape
+# get the shape and crs of the watershed in .shp file
+
 mycase_source = watershed_workflow.sources.ManagerShapefile(mycase_shapefile)
-mycase = mycase_source.getShapes(out_crs=crs)
-mycase.rename(columns={'AREA' : names.AREA}, inplace=True)
+watershed_shape = mycase_source.getShapes(out_crs=crs)
+watershed_shape.rename(columns={'AREA' : names.AREA}, inplace=True)
 
 #--- set up a dictionary of source objects
 #
@@ -267,71 +278,8 @@ and make sure that all are resolved discretely at appropriate length scales for 
 #--- III-1. the Watershed
 
 # Construct and plot the WW object used for storing watersheds
-watershed = watershed_workflow.split_hucs.SplitHUCs(mycase)
+watershed = watershed_workflow.split_hucs.SplitHUCs(watershed_shape)
 watershed.plot()
-
-#--- III-2. the Rivers, if any
-# note: this could be used by B. Sulman's surface water channels's setup, but now is off
-try:
-	# download/collect the river network within that shape's bounds
-	reaches = sources['hydrography'].getShapesByGeometry(watershed.exterior, crs, out_crs=crs)
-
-	rivers = watershed_workflow.river_tree.createRivers(reaches, method='hydroseq')
-
-	watershed_orig, rivers_orig = watershed, rivers
-	
-	# plot the rivers and watershed
-	def plot(ws, rivs, ax=None):
-	    if ax is None:
-	        fig, ax = plt.subplots(1, 1)
-	    ws.plot(color='k', marker='+', markersize=10, ax=ax)
-	    for river in rivs:
-	        river.plot(marker='x', markersize=10, ax=ax)
-	
-	plot(watershed, rivers)
-	
-	
-	# keeping the originals for plotting comparisons
-	def createCopy(watershed, rivers):
-	    """To compare before/after, we often want to create copies.  Note in real workflows most things are done in-place without copies."""
-	    return watershed.deepcopy(), [r.deepcopy() for r in rivers]
-	    
-	
-	watershed, rivers = createCopy(watershed_orig, rivers_orig)
-	
-	# simplifying -- this sets the discrete length scale of both the watershed boundary and the rivers
-	watershed_workflow.simplify(watershed, rivers, refine_L0, refine_L1, refine_d0, refine_d1)
-	
-	# simplify may remove reaches from the rivers object
-	# -- this call removes any reaches from the dataframe as well, signaling we are all done removing reaches
-	#
-	# ETC: NOTE -- can this be moved into the simplify call?
-	for river in rivers:
-	    river.resetDataFrame()
-	
-	# Now that the river network is set, find the watershed boundary outlets
-	for river in rivers:
-	    watershed_workflow.hydrography.findOutletsByCrossings(watershed, river)
-	
-	plot(watershed, rivers)
-	
-	# this generates a zoomable map, showing different reaches and watersheds, 
-	# with discrete points.  Problem areas are clickable to get IDs for manual
-	# modifications.
-	m = watershed.explore(marker=False)
-	for river in rivers_orig:
-	    m = river.explore(m=m, column=None, color='black', name=river['name']+' raw', marker=False)
-	for river in rivers:
-	    m = river.explore(m=m)
-	    
-	m = watershed_workflow.makeMap(m)
-	m
-
-except:
-	# Create an empty GeoDataFrame with defined columns and geometry
-	rivers = gpd.GeoDataFrame(columns=['id', 'name', 'feature'], geometry='feature', crs=crs)
-
-	m = watershed.explore(marker=False)
 
 #########################################################################################################
 
@@ -342,29 +290,37 @@ Discretely create the stream-aligned mesh. Download elevation data, and conditio
 
 """
 
-# Refine triangles if they get too acute
-min_angle = 32 # degrees
-
-# width of reach by stream order (order:width)
-def widths(reach):
-    mapping = {1: 8, 2: 12, 3: 16, 4:20}
-    order = reach.properties['stream_order']
-    return mapping.get(order, 8)  # default width if order not found
-
 #--- create the mesh (surface m2)
-if rivers.empty:
-	# directly use watershed_workflow.triagulation()
-	m2, areas, dists = watershed_workflow.triangulate(watershed,
-										refine_min_angle=min_angle,
+
+# watershed bounding box to m2 mesh
+
+bbox = np.asarray(watershed.exterior.buffer(exterior_buff).bounds)
+bbox = box(bbox[0],bbox[1],bbox[2],bbox[3])
+bbox_gpd = gpd.GeoDataFrame({'id': [1]}, geometry=[bbox], crs=watershed.crs)
+bbox_poly= bbox_gpd.segmentize(max_segment_length=refine_max_edge_length)
+
+#clip to watershed polygon
+cliper = watershed.exterior.buffer(exterior_buff).simplify(50.0)
+bbox_poly = bbox_poly.clip(cliper)
+
+bbox_shapefile = os.path.join(data_dir,'topography','watershed_bbox.shp')
+bbox_poly.to_file(bbox_shapefile)
+
+bbox_source = watershed_workflow.sources.ManagerShapefile(bbox_shapefile)
+bbox_shapes = bbox_source.getShapes(out_crs=crs)
+bbox_shapes.rename(columns={'AREA' : names.AREA}, inplace=True)
+watershed_bbox = watershed_workflow.split_hucs.SplitHUCs(bbox_shapes)
+
+ 
+# directly use watershed_workflow.triagulation() for watershed_bbox only
+# so that we can get a more regular tri-mesh than raw watershed
+m2, areas, dists = watershed_workflow.triangulate(watershed_bbox,
+										#refine_min_angle=30.0,
+										#refine_max_edge_length=refine_max_edge_length,
 										refine_max_area=refine_max_area,
-										enforce_delaunay=True,
+										enforce_delaunay=False,
+										tol = refine_tol, 
 										diagnostics=True)
-else:
-	m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers, 
-                                                            river_width=widths,
-                                                            refine_min_angle=min_angle,
-                                                            refine_distance=[refine_d0, refine_A0, refine_d1, refine_A1],
-                                                            diagnostics=True)
 
 # prepartition to maintain ordering
 #m2 = m2.partition(8, True)
@@ -374,7 +330,7 @@ else:
 # locally available raster DEM
 dem_raster = os.path.join(data_dir,'topography','AnakRiverBurns_dem_25m.tif') 
 sources['DEM'] = watershed_workflow.sources.ManagerRaster(dem_raster)
-dem = sources['DEM'].getDataset(watershed.exterior.buffer(1000), watershed.crs)['band_1']
+dem = sources['DEM'].getDataset(watershed_bbox.exterior.buffer(exterior_buff), watershed_bbox.crs)['band_1']
 m2.cell_data['DEM'] = watershed_workflow.getDatasetOnMesh(m2, dem, method='linear')
 if os.path.exists('./dem_raw.tif'):
 	os.makedirs(os.path.join(data_dir, 'topography'), exist_ok=True)
@@ -407,26 +363,6 @@ ax.set_aspect('equal')
 plt.tight_layout()
 plt.show()
 
-
-# In the pit-filling algorithm, we want to make sure that river corridor is not filled up. Hence we exclude river corridor cells from the pit-filling algorithm.
-# hydrologically condition the mesh, removing pits
-river_mask=np.zeros((len(m2.conn)))
-if not rivers.empty:
-	for i, elem in enumerate(m2.conn):
-	    if not len(elem)==3:
-	        river_mask[i]=1
-	watershed_workflow.condition.fillPits(m2)
-	
-	# There are a range of options to condition river corridor mesh. We hydrologically condition the river mesh, ensuring unimpeded water flow in river corridors by globally adjusting flowlines to rectify artificial obstructions from inconsistent DEM elevations or misalignments. Please read the documentation for more information
-	
-	# conditioning river mesh
-	#
-	# adding elevations to the river tree for stream bed conditioning
-	watershed_workflow.condition.setProfileByDEM(rivers, dem)
-	
-	# conditioning the river mesh using NHD elevations
-	watershed_workflow.condition.conditionRiverMesh(m2, rivers[0])
-
 # plotting surface mesh with elevations
 fig, ax = plt.subplots()
 ax2 = ax.inset_axes([0.85,0.03,0.25,0.40])
@@ -454,18 +390,9 @@ cbar.ax.set_title('elevation [m]')
 
 plt.show()
 
-if not rivers.empty:	
-	# add labeled sets for subcatchments and outlets
-	watershed_workflow.regions.addWatershedAndOutletRegions(m2, watershed, outlet_width=250, exterior_outlet=True)
-	
-	# add labeled sets for river corridor cells
-	watershed_workflow.regions.addRiverCorridorRegions(m2, rivers)
-	
-	# add labeled sets for river corridor cells by order
-	watershed_workflow.regions.addStreamOrderRegions(m2, rivers)
+for ls in m2.labeled_sets:
+	print(f'{ls.setid} : {ls.entity} : {len(ls.ent_ids)} : "{ls.name}"')
 
-	for ls in m2.labeled_sets:
-		print(f'{ls.setid} : {ls.entity} : {len(ls.ent_ids)} : "{ls.name}"')
 
 
 #########################################################################################################
@@ -504,11 +431,10 @@ plt.show()
 
 #--- map nlcd onto the mesh
 m2_nlcd = watershed_workflow.getDatasetOnMesh(m2, nlcd, method='nearest')
-m2.cell_data['land_cover'] = m2_nlcd
-
-
 # double-check that nan not in the values
-assert 127 not in m2_nlcd
+#assert 127 not in m2_nlcd
+m2_nlcd[np.where(m2_nlcd==127)] = 31 # as barren
+m2.cell_data['land_cover'] = m2_nlcd
 
 # create a new set of labels and indices with only those that actually appear on the mesh
 nlcd_indices, nlcd_cmap, nlcd_norm, nlcd_ticks, nlcd_labels = \
@@ -858,10 +784,10 @@ if ELM_SOILCOLUMN:
 	#elmdomain['area'] = np.empty(ngrid)  # need to be in arc-radian^2
 	elmdomain['area_km2'] = np.empty(ngrid)
 	for j in range(ngrid):
-		if river_mask[j]==1.0: #skip river grid, which has 4 vertices
-			elmdomain['xv'][j,:] = np.nan
-			elmdomain['yv'][j,:] = np.nan
-			continue
+		#if river_mask[j]==1.0: #skip river grid, which has 4 vertices
+		#	elmdomain['xv'][j,:] = np.nan
+		#	elmdomain['yv'][j,:] = np.nan
+		#	continue
 		
 		if m2.crs.is_projected:
 			elm_crs = watershed_workflow.crs.latlon_crs
@@ -881,9 +807,9 @@ if ELM_SOILCOLUMN:
 		elmdomain['zv'][j,:] = m2.coords[m2.conn[j][:]][:,2]
 	 
 	elmdomain['mask'] = np.ones(ngrid) # land mask always 1 now, but cautious near coastal region
-	elmdomain['mask'][np.where(river_mask==1.0)] = 0 # mask out river or water-body temporarily
+	#elmdomain['mask'][np.where(river_mask==1.0)] = 0 # mask out river or water-body temporarily
 	elmdomain['frac'] = np.ones(ngrid)
-	elmdomain['frac'][np.where(river_mask==1.0)] = 0
+	#elmdomain['frac'][np.where(river_mask==1.0)] = 0
 	
 	elmdomain['crs']=m2.crs
 	
