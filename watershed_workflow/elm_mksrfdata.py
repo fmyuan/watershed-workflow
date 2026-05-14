@@ -126,7 +126,7 @@ fates_pfts ={'pftname':[
              'pftnum': [0,1,2,3,4,5,6,7,8,9,10,11,12,13]
             };
 
-# NLCD LC indices and names
+# NLCD LC Type1 (IGBP classification) indices and names
 nlcd_lc = {
     11: ('Open Water'),
     12: ('Perrenial Ice/Snow'),

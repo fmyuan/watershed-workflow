@@ -178,21 +178,7 @@ mycase_shapefile = os.path.join(data_dir, 'Anak_Burn_Perim_Rocha.shp')
 
 # Geometric parameters
 # -- parameters to clean and reduce the river network prior to meshing
-simplify = 10                   # length scale to target average edge 
-ignore_small_rivers = 2         # remove rivers with fewer than this number of reaches -- important for NHDPlus HR 
-prune_by_area_fraction = 0.01   # prune any reaches whose contributing area is less than this fraction of the domain
-
-# -- mesh triangle refinement control
-refine_d0 = 100
-refine_d1 = 300
-refine_L0 = 40
-refine_L1 = 100
-
-refine_A0 = refine_L0**2 / 2
-refine_A1 = refine_L1**2 / 2
-
 # 
-
 # Simulation control
 start = cftime.DatetimeNoLeap(2003,1,1)  # modis LAI starts from 2002-07-04
 end = cftime.DatetimeNoLeap(2022,1,1)           
@@ -953,8 +939,8 @@ if ELM_SOILCOLUMN:
 	ylmt = elmdomain['yv'].flatten()
 	yrange = [np.nanmin(ylmt), np.nanmax(ylmt)]
 	
-	#soilvars=['ocd','bdod','sand','silt','clay'] #unit: hg/m3-->0.1kg/m3, cg/cm3 -->0.01kg/dm3, %, %, %
-	soilvars=['ocd'] #unit: hg/m3 --> 0.1kg/m3 ORGANIC in ELM, but not sure if in kgC or kgSOM ???
+	soilvars=['ocd','bdod','sand','silt','clay'] #unit: hg/m3-->0.1kg/m3, cg/cm3 -->0.01kg/dm3, %, %, %
+	#soilvars=['ocd'] #unit: hg/m3 --> 0.1kg/m3 ORGANIC in ELM, but not sure if in kgC or kgSOM ???
 	horizons = ['0-5cm','5-15cm','15-30cm','30-60cm','60-100cm','100-200cm']   
 	elm_mksrfdata.download_geotiff_soilgrids( \
 			Range_XLONG=xrange, Range_YLATI=yrange, \

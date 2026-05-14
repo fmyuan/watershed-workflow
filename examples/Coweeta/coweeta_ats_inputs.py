@@ -162,7 +162,7 @@ def toWorkingDir(filename):
 watershed_workflow.config.setDataDirectory(data_dir)
 
 ## Parameters cell -- this provides all parameters that can be changed via pipelining to generate a new watershed. 
-mycase_shapefile = os.path.join(data_dir, myname+'coweeta_basin.shp')
+mycase_shapefile = os.path.join(data_dir, 'coweeta_basin.shp')
 
 # name of watershed or whatever for your cases
 myname = 'coweeta'
@@ -339,7 +339,7 @@ m2, areas, dists = watershed_workflow.tessalateRiverAligned(watershed, rivers,
                                                             diagnostics=True)
 
 # prepartition to maintain ordering
-m2 = m2.partition(8, True)
+#m2 = m2.partition(8, True)
 
 # get a raster for the elevation map, based on 3DEP
 dem = sources['DEM'].getDataset(watershed.exterior.buffer(100), watershed.crs)['dem']
