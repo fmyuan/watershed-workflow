@@ -10,12 +10,33 @@ etc.
 """
 from typing import Tuple, List, Optional
 
+import importlib
+import inspect
 import numpy as np
 import logging
 import pandas as pd
 import geopandas as gpd
 import xarray as xr
 import rosetta
+
+# rosetta's package __init__ re-exports the rosetta() function under the
+# same name as the `rosetta.rosetta` submodule, shadowing it -- so
+# `rosetta.rosetta.SoilDatum` does not resolve.  Reach the submodule
+# directly to get at SoilDatum, which (unlike SoilData.from_array) has
+# been stable across rosetta-soil 0.1.x through 0.3.x.
+_rosetta_impl = importlib.import_module('rosetta.rosetta')
+
+# rosetta-soil <0.3 always returned columns 2-4 (alpha, n, Ksat) as
+# log10 values and had no `estimate_type` kwarg.  rosetta-soil >=0.3
+# added `estimate_type`, defaulting to 'arith' -- which returns those
+# same columns in LINEAR space (the arithmetic mean of the bootstrap
+# ensemble, not the mean in log space), silently changing the meaning
+# of the output.  All downstream unit conversion in this module
+# assumes log-space alpha/n/Ksat, so we must explicitly request
+# `estimate_type='log'` on versions that support it; older versions
+# reject the kwarg entirely and are log-space unconditionally.
+_ROSETTA_ACCEPTS_ESTIMATE_TYPE = \
+    'estimate_type' in inspect.signature(_rosetta_impl.rosetta).parameters
 
 import watershed_workflow.utils.config
 import watershed_workflow.sources.standard_names as names
@@ -33,37 +54,57 @@ __all__ = [
 ]
 
 
-def computeVanGenuchtenModel_Rosetta(data: np.ndarray) -> pd.DataFrame:
-    """Return van Genuchten model parameters using Rosetta v3 model.
+# Column names Rosetta accepts, in the positional order its SoilDatum
+# namedtuple requires.  th33 (field capacity) and th1500 (wilting point)
+# are optional refinements to the model; sand/silt/clay are always
+# required, and bulk density is required to get Ksat.
+_ROSETTA_INPUT_COLUMNS = ['sand pct [%]', 'silt pct [%]', 'clay pct [%]',
+                          'bulk density [g/cm^3]', 'field capacity [cm^3 cm^-3]',
+                          'wilting point [cm^3 cm^-3]']
+
+
+def computeVanGenuchtenModel_Rosetta(data: pd.DataFrame) -> pd.DataFrame:
+    """Return van Genuchten model parameters using the Rosetta v3 model.
 
     (Zhang and Schaap, 2017 WRR)
-    
-    Parameters 
+
+    Parameters
     ----------
-    data : numpy.ndarray(nvar, nsamples)
-      Input data.
+    data : pd.DataFrame
+      One row per sample.  Must include columns 'sand pct [%]', 'silt
+      pct [%]', and 'clay pct [%]'; may optionally include 'bulk
+      density [g/cm^3]', 'field capacity [cm^3 cm^-3]', and 'wilting
+      point [cm^3 cm^-3]' to further constrain the model (Rosetta uses
+      progressively more accurate sub-models as more of these are
+      provided).  Missing optional columns, or NaN entries within
+      them, are treated as unknown for that sample.  The row order of
+      the input is preserved in the output.
 
     Returns
     -------
     pd.DataFrame
-      van Genuchten model parameters
+      van Genuchten model parameters, one row per input row, in the
+      same order as ``data``.
 
     """
+    missing_required = [c for c in _ROSETTA_INPUT_COLUMNS[:3] if c not in data.columns]
+    if missing_required:
+        raise ValueError(f'computeVanGenuchtenModel_Rosetta: data is missing required '
+                          f'column(s) {missing_required}')
+
     logging.info(f'Running Rosetta for van Genutchen parameters')
 
-    #convert data from 1d array to 2d matrix if necessary
-    #
-    # tranpose for backward compatibility!
-    if data.ndim == 1:
-        data_l = [list(data), ]
+    # Build one SoilDatum per row, in Rosetta's expected column order.
+    # Columns not provided are treated as entirely missing (None for
+    # every row) rather than as a required, all-NaN column.
+    aligned = pd.DataFrame({ col: data[col] if col in data.columns else np.nan
+                             for col in _ROSETTA_INPUT_COLUMNS })
+    soildata = rosetta.SoilData([
+        _rosetta_impl.SoilDatum(*row) for row in aligned.itertuples(index=False, name=None)
+    ])
+    if _ROSETTA_ACCEPTS_ESTIMATE_TYPE:
+        result_mean, result_std, codes = rosetta.rosetta(3, soildata, estimate_type='log')
     else:
-        data_l = [list(entry) for entry in data.transpose()]
-
-    soildata = rosetta.SoilData.from_iter(data_l)
-    try:
-        result_mean, result_std, codes = rosetta.rosetta(3, soildata, estimate_type="log")
-    except TypeError:
-        # old rosetta API (rosetta-soil < 0.3) always returns log10 values
         result_mean, result_std, codes = rosetta.rosetta(3, soildata)
     logging.info(f'  ... done')
     result_mean = np.array(result_mean)
@@ -103,13 +144,14 @@ def computeVanGenuchtenModelFromSSURGO(df: pd.DataFrame) -> pd.DataFrame:
       VGM) will be dropped.
 
     """
-    rosetta_input_header = [
-        'total sand pct [%]', 'total silt pct [%]', 'total clay pct [%]', 'bulk density [g/cm^3]',
-    ]
-    df_rosetta = df.dropna(subset=rosetta_input_header)
-
-    # need to transpose the data so that the array have the shape (nvar, nsample)
-    data = df_rosetta[rosetta_input_header].values.T
+    ssurgo_to_rosetta = {
+        'total sand pct [%]': 'sand pct [%]',
+        'total silt pct [%]': 'silt pct [%]',
+        'total clay pct [%]': 'clay pct [%]',
+        'bulk density [g/cm^3]': 'bulk density [g/cm^3]',
+    }
+    df_rosetta = df.dropna(subset=list(ssurgo_to_rosetta.keys()))
+    data = df_rosetta[list(ssurgo_to_rosetta.keys())].rename(columns=ssurgo_to_rosetta)
     vgm = computeVanGenuchtenModel_Rosetta(data)
 
     n_shapes = len(df_rosetta)
@@ -171,14 +213,14 @@ def computeVanGenuchtenModelFromRasters(ds: xr.Dataset) -> xr.Dataset:
     dims = ref.dims
     coords = ref.coords
 
-    # Flatten to (npixels,) per variable across all depths at once.
-    sand_flat = ds['sand'].values.ravel()
-    silt_flat = ds['silt'].values.ravel()
-    clay_flat = ds['clay'].values.ravel()
-    bdod_flat = ds['bdod'].values.ravel()   # kg/dm³ == g/cm³ — correct units for Rosetta
-
-    # data shape expected by computeVanGenuchtenModel_Rosetta: (nvar, nsamples)
-    data = np.array([sand_flat, silt_flat, clay_flat, bdod_flat])
+    # Flatten to (npixels,) per variable across all depths at once, and
+    # label columns to match computeVanGenuchtenModel_Rosetta's expected input.
+    data = pd.DataFrame({
+        'sand pct [%]': ds['sand'].values.ravel(),
+        'silt pct [%]': ds['silt'].values.ravel(),
+        'clay pct [%]': ds['clay'].values.ravel(),
+        'bulk density [g/cm^3]': ds['bdod'].values.ravel(),   # kg/dm³ == g/cm³ — correct units for Rosetta
+    })
     rosetta_df = computeVanGenuchtenModel_Rosetta(data)
 
     # Convert Rosetta log-space outputs to ATS units, working directly on the
@@ -466,7 +508,8 @@ def mangleGLHYMPSProperties(shapes: gpd.GeoDataFrame,
         'van Genuchten alpha [Pa^-1]': vg_alpha,
         'van Genuchten n [-]': van_genuchten_n,
         'residual saturation [-]': residual_saturation,
-        #'description' : descriptions,
+        'description': shapes['Descriptio'],
+        'type': shapes['XX']
     },
                                   geometry=shapes.geometry,
                                   crs=shapes.crs)
