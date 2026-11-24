@@ -3,25 +3,41 @@
 Provides base classes for a Task object, used to store requests for
 datasets in a non-blocking way, and for a ManagerDataset, used to do
 the fetching.
-
 """
 
 import abc
-from typing import Optional, overload, List
+import concurrent.futures
+import dataclasses
+import datetime
+import enum
+from typing import Optional, List
+import numpy as np
 import shapely.geometry
 import xarray as xr
+import rioxarray  # registers .rio accessor on xr.Dataset and xr.DataArray
 import cftime
 import geopandas as gpd
-import attr
+import pandas as pd
 import logging
 import time
 
 from watershed_workflow.crs import CRS
 import watershed_workflow.crs
-import watershed_workflow.warp
-import watershed_workflow.data
+import watershed_workflow.utils.warp
+import watershed_workflow.utils.data
 
-class ManagerDataset(abc.ABC):
+from .manager import Manager, ManagerAttributes
+
+
+class RequestState(enum.Enum):
+    """State machine for a dataset request."""
+    SERVER_PENDING = 'server_pending'
+    SERVER_READY = 'server_ready'
+    DOWNLOADING = 'downloading'
+    READY = 'ready'
+
+
+class ManagerDataset(Manager, abc.ABC):
     """Managers that provide xarray Datasets should inherit from this class.
 
     There are three possible use patterns for this class:
@@ -39,7 +55,7 @@ class ManagerDataset(abc.ABC):
        ...
 
        # really, we need the result now
-       data = mgr.waitForDataset(request)
+       data = mgr.fetchDataset(request)
 
     3. Nonblocking, impatient user checks for data repeatedly (e.g. in a notebook):
 
@@ -56,99 +72,99 @@ class ManagerDataset(abc.ABC):
        mgr.isReady(request)
 
        # it's ready!
-       data = mgr.fetchRequest(request)
-    
+       data = mgr.fetchDataset(request)
+
     Developer notes: derived classes must implement:
 
-    - __init__() : Constructor that supplies native data properties as
-      parameters by calling super().__init__()
+    - __init__() : Constructor that creates a ManagerAttributes instance and
+      passes it to super().__init__(attrs).
 
-    - Request _requestDataset(Request) : Abstract method that establishes the request
+    - Request _requestDataset(Request) : Abstract method that establishes the
+      request and returns as quickly as possible. Should set
+      request.state = SERVER_PENDING or SERVER_READY if no server job is needed.
 
-    - bool isReady(Request) (optional, if not ready immediately)
+    - bool _isServerReady(Request) : Poll the server; trivially return True if
+      there is no server waiting step.
 
-    - Dataset _fetchDataset(request) : Abstract method that fetches the data.
+    - Request _downloadDataset(Request) : Abstract method that downloads the
+      data to disk.
+
+    - Dataset _loadDataset(Request) : Opens files from disk and returns the
+      raw dataset.
 
     """
 
-    @attr.define
+    @dataclasses.dataclass
     class Request:
-        """A PoD class for storing requested info -- intended to be
-        derived, adding in manager-specific references for the data.
+        """A PoD "future" identifying the requested data.
+
+        May be derived or just have more PoD attached by other classes.
         """
-        manager : 'ManagerDataset'
-        is_ready : bool
+        # manager that created the request
+        manager: object
 
-        # parameters to the original request
+        # Requested geometry, in the native_crs_in of the manager
         geometry: shapely.geometry.Polygon
-        start: cftime._cftime.datetime
-        end: cftime._cftime.datetime
-        variables: List
-        out_crs : Optional[CRS] = None
-        resampling : Optional[str] = None
+        out_crs: CRS | None
 
-        def copyFromExisting(self, other):
-            self.manager = other.manager
-            self.is_ready = other.is_ready
-            self.geometry = other.geometry
-            self.start = other.start
-            self.end = other.end
-            self.variables = other.variables
-            self.out_crs = other.out_crs
-            self.resampling = other.resampling
+        # time range and resampling
+        start: cftime._cftime.datetime | None
+        end: cftime._cftime.datetime | None
+        temporal_resampling: str | None
 
+        # requested variables
+        variables: List[str] | None
 
-    def __init__(self, 
-                 name: str,
-                 source: str,
-                 native_resolution: float,
-                 native_crs_in: CRS | None,
-                 native_crs_out: CRS | None,
-                 native_start: cftime._cftime.datetime | None,
-                 native_end: cftime._cftime.datetime | None,
-                 valid_variables: List[str] | None,
-                 default_variables: List[str] | None):
-        """Initialize dataset manager with native data properties.
-        
+        # status of the request
+        state: RequestState = RequestState.SERVER_PENDING
+
+        # background future, set by requestDataset
+        _future: concurrent.futures.Future | None = None
+
+    _poll_interval: int = 120
+
+    def __init__(self, attrs: ManagerAttributes):
+        """Initialize dataset manager with a ManagerAttributes instance.
+
         Parameters
         ----------
-        name : str
-            Name of the dataset manager.
-        source : str
-            Data source or API used to retrieve the data.
-        native_resolution : float
-            Inherent resolution of the data in native_crs_in units.
-        native_crs_in : CRS
-            Expected CRS of the incoming geometry.
-        native_crs_out : CRS
-            CRS of the data fetched.
-        native_start : cftime._cftime.datetime | None
-            Earliest start date of the data, None for non-temporal data.
-        native_end : cftime._cftime.datetime | None
-            Latest end date of the data, None for non-temporal data.
-        valid_variables : List[str] | None
-            Valid variable names, None for single-variable datasets.
-        default_variables : List[str] | None
-            Default variables to retrieve, None for single-variable datasets.
+        attrs : ManagerAttributes
+            Plain-data object holding all metadata for this manager.
+            ``attrs.native_start``/``attrs.native_end`` are used as the
+            default implementation of ``_getNativeStart()``/
+            ``_getNativeEnd()``; both may be ``None`` for non-temporal
+            data, or for a temporal manager that overrides those hooks
+            with variable-dependent logic (in which case
+            ``attrs.native_calendar`` must be given, since calendars
+            cannot be assumed equal across variables, e.g. noleap vs.
+            standard).  When ``attrs.native_calendar`` is omitted, it is
+            detected from whichever of ``native_start``/``native_end``
+            is given.
         """
-        self.name = name
-        self.source = source
-        self.native_resolution = native_resolution
-        self.native_crs_in = native_crs_in
-        self.native_crs_out = native_crs_out
-        self.native_start = native_start
-        self.native_end = native_end
-        self.valid_variables = valid_variables
-        self.default_variables = default_variables
+        super().__init__(attrs)
+        self._native_start = attrs.native_start
+        self._native_end = attrs.native_end
 
-        # Detect calendar from native dates
-        self.native_calendar = self._detectCalendar()
+        # Calendar must be explicit when neither native date is given.
+        calendar = attrs.native_calendar
+        if calendar is not None:
+            self.native_calendar = calendar
+        else:
+            self.native_calendar = self._detectCalendar()
+
+        # Background executor for _waitAndDownload tasks
+        self._executor = concurrent.futures.ThreadPoolExecutor()
 
 
-    def requestDataset(self, geometry, geometry_crs=None,
-                       start=None, end=None, variables=None,
-                       out_crs=None, resampling=None
-                       ):
+    def requestDataset(self,
+                       geometry,
+                       geometry_crs=None,
+                       start=None,
+                       end=None,
+                       variables=None,
+                       out_crs=None,
+                       temporal_resampling=None,
+                       **kwargs):
         """Establish a request for a dataset for the given geometry and time range.
 
         Parameters
@@ -161,90 +177,75 @@ class ManagerDataset(abc.ABC):
             Start date.
         end : str | int | cftime._cftime.datetime | None, optional
             End date.
-        variables : List[str], optional
+        variables : list of str, optional
             Variables to retrieve. For multi-variable datasets, defaults to
             default_variables if None. Ignored for single-variable datasets.
         out_crs : CRS, optional
-            If provided, resamples the data into this CRS.
-        resampling : str, optional
-            If out_crs is provided, this gives the resampling method.
-            Note that the right choice here can depend upon the data
-            type -- for instance 'nearest' (the default) is good for
-            categorical data but 'bilinear' may be better for
-            continuous data.  See rasterio.warp.reproject for a list
-            of options.
+            If provided, reprojects the data into this CRS.  The spatial
+            resampling method is chosen automatically based on the variable
+            dtypes: ``'nearest'`` for integer (categorical) variables,
+            ``'bilinear'`` for float (continuous) variables.  Override
+            ``_spatialResamplingMethod`` on the manager to change this.
+        temporal_resampling : str, optional
+            Temporal resampling method applied to time-series datasets
+            (e.g. ``'monthly'``).  Unrelated to spatial resampling.
+
+        Returns
+        -------
+        Request
+            Request object for this dataset.
+
+        """
+        request = self._preprocessParameters(geometry, geometry_crs, start, end, variables, out_crs, temporal_resampling)
+
+        # Start the server-side job
+        request = self._requestDataset(request, **kwargs)
+
+        # Submit background polling + download to the thread pool
+        request._future = self._executor.submit(self._waitAndDownload, request)
+
+        return request
+
+
+    def isReady(self, request: Request) -> bool:
+        """Check whether the background download is complete.
+
+        Parameters
+        ----------
+        request : Request
+            Request object returned by requestDataset.
+
+        Returns
+        -------
+        bool
+            True if the download is finished (or failed), False otherwise.
+        """
+        return request._future.done()
+
+
+    def fetchDataset(self, request: Request) -> xr.Dataset:
+        """Block until the request is complete and return the dataset.
+
+        Parameters
+        ----------
+        request : Request
+            Request object returned by requestDataset.
 
         Returns
         -------
         xr.Dataset
             Dataset for the requested geometry and time range.
-
         """
-        # pre-request allows downloading files, etc
-        self._prerequestDataset()
-
-        # Use extracted parameter processing
-        request = self._preprocessParameters(geometry, geometry_crs, start, end, variables)
-        request.out_crs = out_crs
-        request.resampling = resampling if resampling is not None else 'nearest'
-
-        # Get dataset
-        request = self._requestDataset(request)
-        return request
-
-    
-    def isReady(self, request : Request) -> bool:
-        """Is the request ready for fetching?"""
-        return request.is_ready
-
-
-    def fetchRequest(self, request : Request) -> xr.Dataset:
-        """Fetch the request and get the actual data."""
-        data = self._fetchDataset(request)
-        data = self._postprocessDataset(request, data)
-        return data
-
-
-    def waitForDataset(self,
-                       request : Request,
-                       interval: int = 120,
-                       tries: int = 100) -> xr.Dataset:
-        """Block until task is complete and return Dataset.
-        
-        Parameters
-        ----------
-        request : Request
-            Request object to wait for.
-        interval : int, optional
-            Sleep interval in seconds between checks.
-        tries : int, optional
-            Maximum number of tries before giving up.
-            
-        Returns
-        -------
-        xr.Dataset
-            Dataset when task is complete.
-        """
-        count = 0
-        is_ready = request.is_ready
-        while count < tries and not is_ready:
-            is_ready = self.isReady(request)
-
-            if not is_ready:
-                logging.info(f'{request.manager.name} request not ready, sleeping {interval}s...')
-                time.sleep(interval)
-                count += 1
-
-        if not is_ready:
-            raise RuntimeError(f'{request.manager.name} request not completing after {tries} tries and {interval*tries} seconds.')
-
-        data = self.fetchRequest(request)
-        return data
+        # Blocks until done; re-raises any exception from the background thread
+        request._future.result()
+        dataset = self._loadDataset(request)
+        return self._postprocessDataset(request, dataset)
 
 
     def getDataset(self, geometry, geometry_crs=None,
                    start=None, end=None, variables=None,
-                   out_crs=None, resampling=None,
+                   out_crs=None, temporal_resampling=None,
+                   **kwargs
                    ):
         """Get dataset for the given geometry and time range.
 
@@ -260,80 +261,86 @@ class ManagerDataset(abc.ABC):
             Start date.
         end : str | int | cftime._cftime.datetime | None, optional
             End date.
-        variables : List[str], optional
+        variables : list of str, optional
             Variables to retrieve. For multi-variable datasets, defaults to
             default_variables if None. Ignored for single-variable datasets.
+        out_crs : CRS, optional
+            If provided, reprojects the data into this CRS.  The spatial
+            resampling method is chosen automatically from variable dtypes.
+        temporal_resampling : str, optional
+            Temporal resampling method for time-series datasets.
 
         Returns
         -------
         xr.Dataset
             Dataset for the requested geometry and time range.
         """
-        request = self.requestDataset(geometry, geometry_crs, start, end, variables, out_crs, resampling)
-        data = self.waitForDataset(request)
-        return data
+        request = self.requestDataset(geometry, geometry_crs, start, end, variables,
+                                      out_crs, temporal_resampling, **kwargs)
+        return self.fetchDataset(request)
 
 
-    def _prerequestDataset(self) -> None:
-        """Managers should overload this method to do stuff prior to processing.
-
-        This can be used to update native variables if they cannot be
-        known on construction (e.g. downloaded files).
-        """
-        pass
-
-
-    @abc.abstractmethod
-    def _requestDataset(self, request : Request) -> Request:
-        """Managers should overload this method to request the data.
+    #
+    # Background thread method
+    #
+    def _waitAndDownload(self, request: Request) -> None:
+        """Poll for server readiness then download; runs in background thread.
 
         Parameters
         ----------
-        Request
-            Dataset request storing the input parameters.
-
-        Returns
-        -------
-        Request
-            Dataset request storing any extra needed data to identify the request.
+        request : Request
+            Request object to poll and download.
         """
-        pass
+        while not self._isServerReady(request):
+            logging.info(f'{self.name}: server not ready, sleeping {self._poll_interval}s...')
+            time.sleep(self._poll_interval)
+        request.state = RequestState.SERVER_READY
+        request.state = RequestState.DOWNLOADING
+        self._downloadDataset(request)
+        request.state = RequestState.READY
 
 
-    @abc.abstractmethod
-    def _fetchDataset(self, request : Request) -> xr.Dataset:
-        """Managers should overload this method to get the data.
+    #
+    # Helper functions
+    #
+    @staticmethod
+    def _todayMinusLag(lag_days: int, calendar: str = 'standard') -> cftime._cftime.datetime:
+        """Compute today minus a publication lag, for bounding native_end on near-real-time sources.
 
         Parameters
         ----------
-        Request
-            Dataset request storing the input parameters.
+        lag_days : int
+            Number of days by which the source's published data trails today.
+        calendar : str, optional
+            cftime calendar to construct the date in.
 
         Returns
         -------
-        xr.Dataset
-            The data requested.
+        cftime._cftime.datetime
+            Today minus lag_days, in the requested calendar.  For
+            'noleap'/'365_day' calendars, Feb 29 is clamped to Feb 28.
         """
-        pass
+        date = datetime.date.today() - datetime.timedelta(days=lag_days)
+        day = date.day
+        if calendar in ('noleap', '365_day') and date.month == 2 and date.day == 29:
+            day = 28
+        return cftime.datetime(date.year, date.month, day, calendar=calendar)
 
-        
     def _detectCalendar(self) -> str:
         """Detect the calendar type from native start/end dates.
-        
+
         Returns
         -------
         str
             Calendar type ('noleap', 'standard', etc.) or 'standard' as default.
         """
-        # Check native_start first, then native_end
-        for date in [self.native_start, self.native_end]:
+        for date in [self._native_start, self._native_end]:
             if date is not None and hasattr(date, 'calendar'):
                 return date.calendar
-        
-        # Default to standard calendar if no dates or no calendar info
         return 'standard'
 
-    def _parseDate(self, date: str | int | cftime._cftime.datetime | None, is_start: bool) -> cftime._cftime.datetime | None:
+    def _parseDate(self, date: str | int | cftime._cftime.datetime | None, is_start: bool,
+                   default: cftime._cftime.datetime | None = None) -> cftime._cftime.datetime | None:
         """Parse date input into cftime datetime.
 
         Parameters
@@ -343,14 +350,16 @@ class ManagerDataset(abc.ABC):
         is_start : bool
             True if this is a start date (uses Jan 1 for int years).
             False if this is an end date (uses Dec 31 for int years).
+        default : cftime._cftime.datetime or None, optional
+            Value to return when date is None.
 
         Returns
         -------
-        cftime._cftime.datetime | None
+        cftime._cftime.datetime or None
             Parsed datetime or None.
         """
         if date is None:
-            return self.native_start if is_start else self.native_end
+            return default
         elif isinstance(date, str):
             return cftime.datetime.strptime(date, "%Y-%m-%d", calendar=self.native_calendar)
         elif isinstance(date, int):
@@ -367,14 +376,81 @@ class ManagerDataset(abc.ABC):
         else:
             raise TypeError(f"Unsupported date type: {type(date)}")
 
+    def _getNativeStart(self, variables: List[str] | None) -> cftime._cftime.datetime | None:
+        """Return the native_start bound to validate against, given requested variables.
+
+        Parameters
+        ----------
+        variables : list of str or None
+            Variables being requested (None means default_variables).
+
+        Returns
+        -------
+        cftime._cftime.datetime or None
+            Defaults to the native_start passed at construction.  Managers
+            whose variables have different start dates should override
+            this to return a variable-specific bound.
+        """
+        return self._native_start
+
+    def _getNativeEnd(self, variables: List[str] | None) -> cftime._cftime.datetime | None:
+        """Return the native_end bound to validate against, given requested variables.
+
+        Parameters
+        ----------
+        variables : list of str or None
+            Variables being requested (None means default_variables).
+
+        Returns
+        -------
+        cftime._cftime.datetime or None
+            Defaults to the native_end passed at construction.  Managers
+            whose variables have different publication schedules (e.g.
+            MODIS LAI vs. LULC) should override this to return a
+            variable-specific bound.
+        """
+        return self._native_end
+
+    def getNativeStart(self, variables: List[str] | None = None) -> cftime._cftime.datetime | None:
+        """Return the earliest available start date for the given variables.
+
+        Parameters
+        ----------
+        variables : list of str or None, optional
+            Variables to check.  Default is ``default_variables``.
+
+        Returns
+        -------
+        cftime._cftime.datetime or None
+            Earliest available start date, or None for non-temporal data.
+        """
+        variables = variables if variables is not None else self.default_variables
+        return self._getNativeStart(variables)
+
+    def getNativeEnd(self, variables: List[str] | None = None) -> cftime._cftime.datetime | None:
+        """Return the latest available end date for the given variables.
+
+        Parameters
+        ----------
+        variables : list of str or None, optional
+            Variables to check.  Default is ``default_variables``.
+
+        Returns
+        -------
+        cftime._cftime.datetime or None
+            Latest available end date, or None for non-temporal data.
+        """
+        variables = variables if variables is not None else self.default_variables
+        return self._getNativeEnd(variables)
+
     def _validateDate(self, date: cftime._cftime.datetime | None, bound: cftime._cftime.datetime | None, is_start: bool) -> None:
         """Validate date against bounds.
 
         Parameters
         ----------
-        date : cftime._cftime.datetime | None
+        date : cftime._cftime.datetime or None
             Date to validate.
-        bound : cftime._cftime.datetime | None
+        bound : cftime._cftime.datetime or None
             Bound to check against.
         is_start : bool
             True if validating start date, False for end date.
@@ -385,16 +461,37 @@ class ManagerDataset(abc.ABC):
             elif not is_start and date > bound:
                 raise ValueError(f"End date {date} is after dataset end {bound}")
 
+    def _validateVariables(self, variables: str | List[str] | None):
+        """Validate and normalize requested variables."""
+        if variables is None:
+            return self.default_variables
 
-    def _preprocessParameters(self, 
+        if self.valid_variables is None:
+            raise ValueError("This dataset does not support variable selection")
+
+        if isinstance(variables, str):
+            variables = [variables,]
+
+        for var in variables:
+            if var not in self.valid_variables:
+                raise ValueError(f"Invalid variable '{var}'. Valid variables: {', '.join(self.valid_variables)}")
+        return variables
+
+
+    #
+    # Dataset methods -- can be overridden but probably don't need to be
+    #
+    def _preprocessParameters(self,
                               geometry: shapely.geometry.Polygon | gpd.GeoDataFrame,
                               geometry_crs: CRS | None,
                               start: str | int | cftime._cftime.datetime | None,
                               end: str | int | cftime._cftime.datetime | None,
-                              variables: List[str] | None
+                              variables: List[str] | None,
+                              out_crs: CRS | None,
+                              temporal_resampling: str | None
                               ) -> Request:
         """Process and validate parameters for getDataset calls.
-        
+
         Parameters
         ----------
         geometry : shapely.geometry.Polygon | gpd.GeoDataFrame
@@ -405,14 +502,18 @@ class ManagerDataset(abc.ABC):
             Start date.
         end : str | int | cftime._cftime.datetime | None, optional
             End date.
-        variables : Optional[List[str]], optional
+        variables : list of str or None, optional
             Variables to retrieve.
-            
+        out_crs : CRS or None
+            Output coordinate reference system, or None.
+        temporal_resampling : str or None
+            Temporal resampling method for time-series data, or None.
+
         Returns
         -------
         Request
             The "future" object storing the metadata for the data request.
-        
+
         """
         # Process geometry
         if isinstance(geometry, gpd.GeoDataFrame):
@@ -420,7 +521,7 @@ class ManagerDataset(abc.ABC):
                 raise ValueError("geometry_crs should not be provided with GeoDataFrame")
             geometry_crs = geometry.crs
             polygon = geometry.union_all()
-        elif isinstance(geometry, shapely.geometry.Polygon):
+        elif isinstance(geometry, shapely.geometry.base.BaseGeometry):
             if geometry_crs is None:
                 raise ValueError("geometry_crs is required when geometry is a Polygon")
             polygon = geometry
@@ -428,38 +529,69 @@ class ManagerDataset(abc.ABC):
             raise TypeError(f"Unsupported geometry type: {type(geometry)}")
 
         # Transform to native input CRS and buffer
-        polygon = watershed_workflow.warp.shply(polygon, geometry_crs, self.native_crs_in)
+        polygon = watershed_workflow.utils.warp.warpShply(polygon, geometry_crs, self.native_crs_in)
         logging.info(f'Incoming shape area = {polygon.area}')
-        logging.info(f'... buffering incoming shape by = {self.native_resolution}')
-        polygon = polygon.buffer(self.native_resolution)
+        logging.info(f'... buffering incoming shape by 3x native resolution = {3 * self.native_resolution}')
+        polygon = polygon.buffer(3 * self.native_resolution)
         logging.info(f'... buffered shape area = {polygon.area}')
 
-        # Parse and validate dates
-        parsed_start = self._parseDate(start, True)
-        self._validateDate(parsed_start, self.native_start, True)
+        # Parse and validate variables first -- date bounds may depend on
+        # which variables are requested (e.g. MODIS LAI vs. LULC).
+        parsed_variables = self._validateVariables(variables)
 
-        parsed_end = self._parseDate(end, False)
-        self._validateDate(parsed_end, self.native_end, False)
+        # Parse and validate dates, temporal_resampling
+        native_start = self._getNativeStart(parsed_variables)
+        native_end = self._getNativeEnd(parsed_variables)
 
-        # Handle variables
-        if variables is None:
-            variables = self.default_variables
-        elif self.valid_variables is None:
-            raise ValueError("This dataset does not support variable selection")
-        else:
-            # Validate each variable
-            for var in variables:
-                if var not in self.valid_variables:
-                    raise ValueError(f"Invalid variable '{var}'. Valid variables: {', '.join(self.valid_variables)}")
+        parsed_start = self._parseDate(start, True, default=native_start)
+        self._validateDate(parsed_start, native_start, True)
 
-        return ManagerDataset.Request(self, False, polygon, parsed_start, parsed_end, variables)
+        parsed_end = self._parseDate(end, False, default=native_end)
+        self._validateDate(parsed_end, native_end, False)
 
+        if temporal_resampling is not None and parsed_start is None:
+            raise ValueError("Cannot resample non-temporal dataset.")
+
+        if parsed_start is not None and parsed_end is not None and parsed_start > parsed_end:
+            raise ValueError(f"start ({parsed_start}) must not be after end ({parsed_end}).")
+
+        return self.Request(self, polygon, out_crs, parsed_start, parsed_end, temporal_resampling, parsed_variables)
+
+
+    def _spatialResamplingMethod(self, dataset: xr.Dataset) -> str:
+        """Choose a spatial resampling method appropriate for this dataset.
+
+        The default implementation returns ``'nearest'`` if any data variable
+        has an integer dtype (categorical / indicator data), and ``'bilinear'``
+        otherwise (continuous float data).  Derived classes may override this
+        to force a specific method.
+
+        Parameters
+        ----------
+        dataset : xr.Dataset
+            Dataset whose variables are inspected to choose the method.
+
+        Returns
+        -------
+        str
+            A rasterio resampling method name accepted by
+            ``watershed_workflow.utils.warp.warpDataset``.
+        """
+        for var in dataset.data_vars:
+            if np.issubdtype(dataset[var].dtype, np.integer):
+                return 'nearest'
+        return 'bilinear'
 
     def _postprocessDataset(self,
-                            request : Request,
-                            dataset : xr.Dataset,
+                            request: Request,
+                            dataset: xr.Dataset,
                             ):
-        """Time dtype converions and clipping, check CRS is applied, and check post conditions."""
+        """Clip, time-slice, and (optionally) reproject the dataset.
+
+        Derived classes that need to change dtypes or units should do so
+        *before* calling ``super()._postprocessDataset()``, so that the
+        spatial resampling method is chosen from the final dtypes.
+        """
         # check the CRS out
         assert hasattr(dataset, 'rio')
         if dataset.rio.crs is None:
@@ -468,36 +600,128 @@ class ManagerDataset(abc.ABC):
             assert watershed_workflow.crs.isEqual(watershed_workflow.crs.from_rasterio(dataset.rio.crs),
                                            self.native_crs_out)
 
-        # make sure the time dimension is in the right calendar and dtype, and clip if needed
-        if 'time' in dataset.dims:
-            if not isinstance(dataset['time'][0], cftime._cftime.datetime):
-                new_time = watershed_workflow.data.convertTimesToCFTime(dataset['time'].values)
+        # Spatial clip to the buffered geometry bounds in native_crs_out.
+        clip_bounds = watershed_workflow.utils.warp.warpBounds(
+            request.geometry.bounds, self.native_crs_in, self.native_crs_out)
+        dataset = dataset.rio.clip_box(*clip_bounds,
+                                       crs=watershed_workflow.crs.to_rasterio(self.native_crs_out))
+
+
+        # Convert and clip all time dimensions.
+        # Detect by index type (CFTimeIndex or DatetimeIndex) rather than by
+        # name: more robust and handles per-variable dims like 'time_LAI'.
+        # Float-encoded time is decoded automatically by xarray on open, so
+        # by this point all time dims will have a CFTimeIndex or DatetimeIndex.
+        for dim in [d for d in dataset.dims
+                    if isinstance(dataset.indexes.get(d),
+                                  (xr.CFTimeIndex, pd.DatetimeIndex))]:
+            if isinstance(dataset.indexes[dim], pd.DatetimeIndex):
+                new_time = watershed_workflow.utils.data.convertTimesToCFTime(dataset[dim].values)
                 if self.native_calendar == 'noleap':
-                    new_time = watershed_workflow.data.convertTimesToCFTimeNoleap(new_time)
-                dataset['time'] = new_time
+                    new_time = watershed_workflow.utils.data.convertTimesToCFTimeNoleap(new_time)
+                dataset[dim] = new_time
 
-            # Clip in time if temporal data
-            dataset = dataset.sel(time=slice(request.start, request.end))
+            dataset = dataset.sel({dim: slice(request.start, request.end)})
 
-        # change coordinate system if requested
+        # Reproject to out_crs if requested.
+        # The resampling method is chosen based on the (already-converted) dtypes:
+        # integer variables use 'nearest'; float variables use 'bilinear'.
         if request.out_crs is not None:
-            # guess the coordinate names -- they must be in x,y
+            # Normalise coordinate names to x/y before reprojecting.
             if 'x' in dataset.coords and 'y' in dataset.coords:
                 pass
             elif 'lon' in dataset.coords and 'lat' in dataset.coords:
-                dataset = dataset.rename({'lon' : 'x', 'lat' : 'y'})
+                dataset = dataset.rename({'lon': 'x', 'lat': 'y'})
             elif 'longitude' in dataset.coords and 'latitude' in dataset.coords:
-                dataset = dataset.rename({'longitude' : 'x', 'latitude' : 'y'})
-            
-            dataset = watershed_workflow.warp.dataset(dataset, request.out_crs, request.resampling)
-            
-        # Add name and source to dataset attributes
-        dataset.attrs['name'] = self.name
+                dataset = dataset.rename({'longitude': 'x', 'latitude': 'y'})
+
+            resampling = self._spatialResamplingMethod(dataset)
+            dataset = watershed_workflow.utils.warp.warpDataset(dataset, request.out_crs, resampling)
+
+        # Ensure y coordinate is monotonically increasing (xarray/matplotlib
+        # convention: south-first).  Some sources store data north-first
+        # (descending y), which causes imshow to render upside-down.
+        y_dim = next((d for d in dataset.dims if d in ('y', 'lat', 'latitude')), None)
+        if y_dim is not None:
+            y_vals = dataset[y_dim].values
+            if len(y_vals) > 1 and y_vals[0] > y_vals[-1]:
+                dataset = dataset.isel({y_dim: slice(None, None, -1)})
+
+        # Add product and source to dataset attributes
+        dataset.attrs['product'] = self.product
         dataset.attrs['source'] = self.source
 
         return dataset
-        
-    
-        
 
-    
+
+    #
+    # abstract methods that must be provided by derived datasets
+    # ------------------------------------------------------------------
+    # Hooks to be overridden by deriving classes.
+    # ------------------------------------------------------------------
+    @abc.abstractmethod
+    def _requestDataset(self, request: Request) -> Request:
+        """Submit server job and return quickly.
+
+        If the source has no asynchronous server step, this method may return
+        immediately. State transitions are managed entirely by the base class.
+
+        Parameters
+        ----------
+        request : Request
+            Dataset request storing the input parameters.
+
+        Returns
+        -------
+        Request
+            Dataset request storing any extra needed data to identify the request.
+        """
+        pass
+
+
+    @abc.abstractmethod
+    def _isServerReady(self, request: Request) -> bool:
+        """Poll the server to check whether the submitted job is complete.
+
+        For sources with no asynchronous server step, simply return True.
+
+        Parameters
+        ----------
+        request : Request
+            Dataset request to poll.
+
+        Returns
+        -------
+        bool
+            True if the server-side job is complete and data can be downloaded.
+        """
+        pass
+
+
+    @abc.abstractmethod
+    def _downloadDataset(self, request: Request) -> None:
+        """Download data files to disk.
+
+        Parameters
+        ----------
+        request : Request
+            Dataset request storing the input parameters.
+        """
+        pass
+
+
+    @abc.abstractmethod
+    def _loadDataset(self, request: Request) -> xr.Dataset:
+        """Open files from disk and return the raw dataset.
+
+        Parameters
+        ----------
+        request : Request
+            Dataset request populated by _downloadDataset.
+
+        Returns
+        -------
+        xr.Dataset
+            The raw dataset before postprocessing.
+        """
+        pass

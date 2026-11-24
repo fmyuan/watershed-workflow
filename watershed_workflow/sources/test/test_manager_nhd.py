@@ -2,7 +2,6 @@ import pytest
 import geopandas as gpd
 
 from watershed_workflow.sources.manager_nhd import ManagerNHD
-from watershed_workflow.sources.test.fixtures import coweeta
 import watershed_workflow.crs
 import watershed_workflow.sources.standard_names as names
 
@@ -28,10 +27,9 @@ def nhd_hr():
 def test_constructor_properties():
     """Test that constructor sets properties correctly"""
     nhd = ManagerNHD('NHDPlus MR v2.1')
-    assert nhd.name == 'NHDPlus MR v2.1'  # Name is overridden to be user-friendly
-    assert nhd.source == 'HyRiver.WaterData'
+    assert nhd.product == 'NHDPlus MR v2.1'
+    assert nhd.source == 'pynhd WaterData'
     assert nhd.native_crs_in == watershed_workflow.crs.latlon_crs
-    assert nhd._protocol_name == 'WaterData'  # Protocol name is the string
     assert nhd._protocol.__name__ == 'WaterData'  # _protocol is the class
     assert nhd._catchments == True  # default
 
@@ -44,10 +42,11 @@ def test_constructor_no_catchments():
 
 def test_invalid_protocol():
     """Test that invalid protocol raises error"""
-    with pytest.raises(ValueError, match="Invalid ManagerNHD dataset_name"):
+    with pytest.raises(ValueError, match="Invalid ManagerNHD product"):
         ManagerNHD('Invalid Protocol')
 
 
+@pytest.mark.network
 def test_nhd_waterdata_get_by_geometry(nhd_waterdata, coweeta):
     """Test WaterData protocol getShapesByGeometry"""
     reaches = nhd_waterdata.getShapesByGeometry(coweeta)
@@ -67,6 +66,7 @@ def test_nhd_waterdata_get_by_geometry(nhd_waterdata, coweeta):
             assert reaches[col].notna().any()
 
 
+@pytest.mark.network
 def test_nhd_mr_get_by_geometry(nhd_mr, coweeta):
     """Test NHD MR protocol getShapesByGeometry"""
     reaches = nhd_mr.getShapesByGeometry(coweeta)
@@ -77,6 +77,7 @@ def test_nhd_mr_get_by_geometry(nhd_mr, coweeta):
     assert names.NAME in reaches.columns
 
 
+@pytest.mark.network
 def test_nhd_hr_get_by_geometry(nhd_hr, coweeta):
     """Test NHDPlus HR protocol getShapesByGeometry"""
     reaches = nhd_hr.getShapesByGeometry(coweeta)
@@ -87,6 +88,7 @@ def test_nhd_hr_get_by_geometry(nhd_hr, coweeta):
     assert names.NAME in reaches.columns
 
 
+@pytest.mark.network
 def test_getShapesByGeometry_with_shape(nhd_waterdata, coweeta):
     """Test getShapesByGeometry with GeoDataFrame input"""
     
@@ -98,6 +100,7 @@ def test_getShapesByGeometry_with_shape(nhd_waterdata, coweeta):
     assert names.NAME in reaches.columns
 
 
+@pytest.mark.network
 def test_getShapesByID(nhd_waterdata, coweeta):
     """Test getShapesByID functionality"""
     # First get some reaches to get their IDs
@@ -118,6 +121,7 @@ def test_getShapesByID(nhd_waterdata, coweeta):
     assert len(two_reaches) == 2
 
 
+@pytest.mark.network
 def test_getShapesByID_string_input(nhd_waterdata, coweeta):
     """Test getShapesByID with single string input"""
     reaches = nhd_waterdata.getShapesByGeometry(coweeta)
@@ -129,6 +133,7 @@ def test_getShapesByID_string_input(nhd_waterdata, coweeta):
     assert single_reach[names.ID].iloc[0] == first_id
 
 
+@pytest.mark.network
 def test_catchments_functionality(coweeta):
     """Test that catchments are properly fetched when enabled"""
     # Test with catchments enabled
@@ -146,6 +151,7 @@ def test_catchments_functionality(coweeta):
     assert 'catchment' not in reaches_no_catchments, "Should not have catchment columns when catchments=False"
 
 
+@pytest.mark.network
 def test_standard_naming_applied(nhd_waterdata, coweeta):
     """Test that standard naming is properly applied"""
     reaches = nhd_waterdata.getShapesByGeometry(coweeta.geometry[0], coweeta.crs)
@@ -162,6 +168,7 @@ def test_standard_naming_applied(nhd_waterdata, coweeta):
     assert reaches.attrs['source'] == nhd_waterdata.source
 
 
+@pytest.mark.network
 def test_crs_handling(nhd_waterdata, coweeta):
     """Test that CRS is properly handled"""
     coweeta_utm = coweeta.to_crs(watershed_workflow.crs.default_crs)

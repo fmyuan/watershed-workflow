@@ -28,7 +28,9 @@ PACKAGES_BASE=['python<3.13',           # limited for cert issues in docker cont
                's3fs',
                'zarr',
                'metis',
-               'pymetis>=2025'          # arm64 builds are correct
+               'pymetis>=2025',         # arm64 builds are correct
+               'earthaccess',           # NASA Earthdata synchronous download
+               'pyhdf',                 # read MODIS HDF4 granules
                ]
 
 # extra packages needed in the WW env when building for a user
@@ -41,9 +43,10 @@ PACKAGES_EXTRAS_USER=['ipykernel',
 PACKAGES_EXTRAS_DEV=[
                'sphinx',
                'numpydoc',
-               'sphinx_rtd_theme',
-               'nbsphinx',
+               'pydata-sphinx-theme',
+               'myst-nb',
                'ipython',
+               'sphinxcontrib-jquery',
                ]
 
 # packages for the base environment
@@ -82,17 +85,8 @@ CHANNELS=['conda-forge',
 PACKAGE_MANAGER = 'conda'
 
 
-import datetime
 import subprocess
 import os
-
-def date_str():
-    """Gets the date in a preferred format for writing env names"""
-    return datetime.datetime.today().strftime('%Y-%m-%d')
-
-def get_env_name(name):
-    """Standard format for the name of an environment."""
-    return name+'-'+date_str()
 
 def get_env_prefix(env_type=None):
     if env_type is None or env_type == 'USER':
@@ -153,15 +147,8 @@ def dump_env_local(env_type, os_name, env_name, env_filename=None, new_env_name=
         else:
             env_filename = os.path.join('environments', f'environment-{env_type}-{os_name}.yml')
 
-
     if new_env_name is None:
-        if env_name is None:
-            new_env_name = get_env_prefix(env_type)
-        else:    
-            new_env_name = env_name
-
-    if env_name is None:
-        env_name = get_env_name(get_env_prefix(env_type))
+        new_env_name = env_name
 
 
     args = ['env', 'export',]
@@ -178,12 +165,8 @@ def dump_env_local(env_type, os_name, env_name, env_filename=None, new_env_name=
     with open(env_filename, 'w') as fid:
         fid.write('\n'.join(lines))
 
-def create_env_local(env_type, os_name, packages, env_name=None, dry_run=False, use_local=False):
+def create_env_local(env_type, os_name, packages, env_name, dry_run=False, use_local=False):
     """Creates the environment locally."""
-    if env_name is None:
-        env_prefix = get_env_prefix(env_type)
-        env_name = get_env_name(env_prefix)
-
     # build up the conda env create command
     cmd = [PACKAGE_MANAGER, 'create', '--yes', '--name', env_name]
     if use_local:
@@ -196,7 +179,8 @@ def create_env_local(env_type, os_name, packages, env_name=None, dry_run=False, 
 
     # call conda env create
     if dry_run:
-        return print(cmd)
+        print(cmd)
+        return env_name
     subprocess.run(cmd, check=True)
 
     # set an environment variable so the user can figure out what we just made
@@ -206,16 +190,61 @@ def create_env_local(env_type, os_name, packages, env_name=None, dry_run=False, 
         os.environ[f'WATERSHED_WORKFLOW_{env_type}_ENV'] = env_name
     return env_name
 
-def create_and_dump_env_local(env_type, os_name, packages, env_name=None, dump_only=False, dry_run=False, use_local=False):
+def pip_install_requirements(env_name, requirements_filename='requirements.txt', dry_run=False):
+    """Pip-installs requirements.txt into an existing conda env.
+
+    Generates a constraints file from the conda env's already-installed
+    packages first, so pip cannot silently replace a conda-installed
+    package (e.g. numpy) with an incompatible PyPI wheel to satisfy some
+    pip-only package's transitive dependency.
+    """
+    constraints_filename = os.path.join(os.path.dirname(requirements_filename) or '.', 'constraints.txt')
+
+    # NOTE: use `pip list --format=freeze`, not `pip freeze` -- for packages
+    # conda built locally (rattler-build/conda-build), `pip freeze` reports a
+    # `file:///.../conda-bld/.../work/dist/....whl` provenance URL pointing at
+    # the (long-gone) build sandbox instead of a plain version, which then
+    # fails to resolve when used as a constraint.
+    freeze_cmd = [PACKAGE_MANAGER, 'run', '--name', env_name, 'python', '-m', 'pip', 'list', '--format=freeze']
+    if dry_run:
+        print(freeze_cmd, '>', constraints_filename)
+    else:
+        result = subprocess.run(freeze_cmd, check=True, capture_output=True)
+        with open(constraints_filename, 'w') as fid:
+            fid.write(result.stdout.decode('utf-8'))
+
+    install_cmd = [PACKAGE_MANAGER, 'run', '--name', env_name, 'python', '-m', 'pip', 'install',
+                   '-c', constraints_filename, '-r', requirements_filename]
+    if dry_run:
+        return print(install_cmd)
+
+    # meshpy has no linux-aarch64 wheel on PyPI and must build its bundled
+    # Triangle sources from scratch there.  GCC on aarch64 fuses
+    # multiply-adds into FMA instructions at -O2/-O3 by default
+    # (-ffp-contract=fast), which changes intermediate rounding and breaks
+    # Triangle's exact-arithmetic orientation predicates (finddirection()
+    # aborts on otherwise-valid input).  Disabling FP contraction fixes it
+    # without giving up optimization.  Harmless to set for the whole
+    # requirements.txt install since the other packages there are pure Python.
+    env = os.environ.copy()
+    for var in ('CFLAGS', 'CXXFLAGS'):
+        env[var] = (env.get(var, '') + ' -ffp-contract=off').strip()
+    subprocess.run(install_cmd, check=True, env=env)
+
+
+def create_and_dump_env_local(env_type, os_name, packages, env_name, dump_only=False, dry_run=False, use_local=False,
+                               pip_requirements=True, requirements_filename='requirements.txt'):
     if not dump_only:
-        create_env_local(env_type, os_name, packages, env_name, dry_run, use_local)
+        env_name = create_env_local(env_type, os_name, packages, env_name, dry_run, use_local)
+        if pip_requirements:
+            pip_install_requirements(env_name, requirements_filename, dry_run)
         dump_env_local(env_type, os_name, env_name)
 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Helper script to (re-)create environments and dump them to file.')
-    parser.add_argument('--env-type', type=str, default='CI', choices=['STANDARD', 'USER', 'CI'],
+    parser.add_argument('--env-type', type=str, default='CI', choices=['STANDARD', 'USER', 'CI', 'DEV'],
                         help='Type of environment to build, one of:\n'
                              '  - "STANDARD" - the default WW libraries\n'
                              '  - "CI"       - minimal build of libraries for CI\n'
@@ -235,6 +264,11 @@ if __name__ == '__main__':
                              'and a OS-specific filename for writing the environment.yml file.')
     parser.add_argument('--use-local', action='store_true',
                         help='Use local emulated channel, with locally built packages, in all conda create calls.')
+    parser.add_argument('--no-pip-requirements', action='store_true',
+                        help='Skip pip-installing requirements.txt (e.g. rosetta-soil, meshpy, hf-hydrodata) into '
+                             'the workflow environment after conda create.  By default this runs automatically, '
+                             'first generating a constraints.txt from the conda env so pip cannot silently '
+                             'replace a conda-installed package (e.g. numpy) with an incompatible PyPI wheel.')
     parser.add_argument('ENV_NAME', type=str, help='Name for this environement')
     args = parser.parse_args()
 
@@ -245,17 +279,24 @@ if __name__ == '__main__':
 
     if args.env_type == 'STANDARD':
         args.env_type = None
+
+    # create the tools environment FIRST -- meshpy (in requirements.txt) has
+    # no linux-aarch64 wheel on PyPI and must build from source there, which
+    # needs the compiler toolchain this env provides on PATH (see
+    # CI-Env.Dockerfile, which exports PATH from this env before calling us).
+    if args.with_tools_env is not None:
+        packages = get_packages('TOOLS', args.OS)
+        create_and_dump_env_local('TOOLS', args.OS, packages, args.with_tools_env, args.dump_only, args.dry_run,
+                                   pip_requirements=False)
+
     if not args.without_ww_env:
         # create the workflow environment
         packages = get_packages(args.env_type, args.OS)
-        create_and_dump_env_local(args.env_type, args.OS, packages, args.ENV_NAME, args.dump_only, args.dry_run, args.use_local)
+        create_and_dump_env_local(args.env_type, args.OS, packages, args.ENV_NAME, args.dump_only, args.dry_run, args.use_local,
+                                   pip_requirements=not args.no_pip_requirements)
 
     if args.with_user_env is not None:
         # create the user environment
         packages = get_packages('USER', args.OS, args.user_env_extras)
-        create_and_dump_env_local('USER', args.OS, packages, args.with_user_env, args.dump_only, args.dry_run)
-
-    if args.with_tools_env is not None:
-        # create the tools environment
-        packages = get_packages('TOOLS', args.OS)
-        create_and_dump_env_local('TOOLS', args.OS, packages, args.with_tools_env, args.dump_only, args.dry_run)
+        create_and_dump_env_local('USER', args.OS, packages, args.with_user_env, args.dump_only, args.dry_run,
+                                   pip_requirements=False)

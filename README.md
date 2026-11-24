@@ -1,14 +1,14 @@
 # Watershed Workflow
-[![Docs](https://img.shields.io/badge/docs-link-blue?style=for-the-badge)](https://environmental-modeling-workflows.github.io/watershed-workflow/build/html/index.html)
-[![Release](https://img.shields.io/github/v/release/environmental-modeling-workflows/watershed-workflow?display_name=release&style=for-the-badge)](https://github.com/environmental-modeling-workflows/watershed-workflow/releases/tag/watershed-workflow-1.1.0)
+[![Docs](https://img.shields.io/badge/docs-link-blue?style=for-the-badge)](https://environmental-modeling-workflows.github.io/watershed-workflow/)
+[![Release](https://img.shields.io/github/v/release/environmental-modeling-workflows/watershed-workflow?display_name=release&style=for-the-badge)](https://github.com/environmental-modeling-workflows/watershed-workflow/releases/tag/watershed-workflow-2.0.0)
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/environmental-modeling-workflows/watershed-workflow/main.yml?label=tests&style=for-the-badge)](https://github.com/environmental-modeling-workflows/watershed-workflow/actions)
 [![Issues](https://img.shields.io/github/issues/environmental-modeling-workflows/watershed-workflow?style=for-the-badge)](https://github.com/environmental-modeling-workflows/watershed-workflow/issues)
 [![Issues](https://img.shields.io/github/issues-pr/environmental-modeling-workflows/watershed-workflow?style=for-the-badge)](https://github.com/environmental-modeling-workflows/watershed-workflow/pulls)
 
-![sample image](https://environmental-modeling-workflows.github.io/watershed-workflow/build/html/_images/watershed_workflow.png "Example output of the Coweeta Hydrologic Lab watersheds across scales.")
+![sample image](https://environmental-modeling-workflows.github.io/watershed-workflow/stable/_images/watershed_workflow.png) "Example output of the Coweeta Hydrologic Lab watersheds across scales.")
 
-[Please prefer to see our documentation.](https://environmental-modeling-workflows.github.io/watershed-workflow/build/html/index.html)
+[Please prefer to see our documentation.](https://environmental-modeling-workflows.github.io/watershed-workflow/stable/index.html)
 
 Watershed Workflow is a python-based, open source chain of tools for generating meshes and other data inputs for hyper-resolution hydrology, anywhere in the (conterminous + Alaska?) US.  
 
@@ -33,15 +33,47 @@ Note: Hypothetically, this package works on all of Linux, Mac, and Windows.  It 
 
 [Visit our Installation documentation.](https://environmental-modeling-workflows.github.io/watershed-workflow/stable/install.html)
 
+## Testing
+
+Tests are run with [pytest](https://pytest.org) and [pytest-nbmake](https://github.com/treebeardtech/nbmake).
+
+By default, tests marked `network` (require live data downloads) and `integration` (require optional
+dependencies not present in CI) are excluded.  To run different subsets:
+
+```bash
+# Unit and source manager tests only (default, safe everywhere)
+pytest watershed_workflow/test/ watershed_workflow/sources/test/
+
+# Notebook regression tests (no network or integration required)
+pytest --nbmake examples/
+
+# All non-network, non-integration tests
+pytest --nbmake watershed_workflow/test/ watershed_workflow/sources/test/ examples/
+
+# Include network tests (requires internet access and data service credentials)
+pytest -m 'not integration' --nbmake examples/ watershed_workflow/sources/test/
+
+# Run everything including integration notebooks
+pytest -m '' --nbmake watershed_workflow/test/ watershed_workflow/sources/test/ examples/
+```
+
+Notebook markers are set via cell tags on the first cell of each notebook:
+- `network` — `examples/get_AORC_met_data.ipynb`, `examples/get_Daymet.ipynb`, `examples/get_MODIS_LAI.ipynb`
+- `integration` — `examples/Coweeta/coweeta_ats.ipynb`
+
 ## For more...
 
 * [See the documentation](https://environmental-modeling-workflows.github.io/watershed-workflow)
-* [See a gallery of data product images (work in progress)](https://environmental-modeling-workflows.github.io/watershed-workflow/build/html/gallery.html)
+* [See a gallery of data product images (work in progress)](https://environmental-modeling-workflows.github.io/watershed-workflow/stable/html/gallery.html)
 
 ## Funding, attribution, etc
 
 This work was supported by multiple US Department of Energy projects, and was mostly developed at the Oak Ridge National Laboratory.  Use of this codebase in the academic literature should cite:
 
 [Coon, E. T., & Shuai, P. (2022). Watershed Workflow: A toolset for parameterizing data-intensive, integrated hydrologic models. Environmental Modelling & Software, 157, 105502.](https://doi.org/10.1016/j.envsoft.2022.105502)
+
+The use of stream-aligned mixed-polyhedral mesh should cite:
+
+[Rathore, S. S., Coon E. T., and Painter S. L. (2024). A stream-aligned mixed polyhedral meshing strategy for integrated surface-subsurface hydrological models. Computers & Geosciences, 188, 105617.](https://doi.org/10.1016/j.cageo.2024.105617)
 
 Collaborators and contributions are very welcome!

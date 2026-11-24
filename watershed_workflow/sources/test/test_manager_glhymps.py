@@ -4,12 +4,10 @@ import os
 import shapely
 import numpy as np
 
-import watershed_workflow.config
+import watershed_workflow.utils.config
 import watershed_workflow.utils
 import watershed_workflow.sources.manager_glhymps
 import watershed_workflow.sources.standard_names as names
-
-from fixtures import coweeta
 
 
 def test_glhymps_coweeta(coweeta):

@@ -5,7 +5,7 @@ import shapely
 import numpy as np
 import geopandas as gpd
 
-import watershed_workflow.config
+import watershed_workflow.utils.config
 import watershed_workflow.crs
 import watershed_workflow.sources.standard_names as names
 from watershed_workflow.sources.manager_shapefile import ManagerShapefile
@@ -51,7 +51,7 @@ def test_crs():
 def test_constructor_basic(shapefile_path):
     """Test basic constructor"""
     ms = ManagerShapefile(shapefile_path)
-    assert ms.name.startswith('shapefile: ')
+    assert ms.product == 'undefined'
     assert ms.source == os.path.abspath(shapefile_path)
     assert ms.filename == shapefile_path
     assert ms.id_name is None
@@ -141,7 +141,7 @@ def test_standard_naming(manager_no_id, test_geometry, test_crs):
     assert result[names.NAME].iloc[0] == str(result[names.ID].iloc[0])
     
     # Check metadata
-    assert result.attrs['name'] == manager_no_id.name
+    assert result.attrs['product'] == manager_no_id.product
     assert result.attrs['source'] == manager_no_id.source
 
 
@@ -215,3 +215,43 @@ def test_getShapesByID_named_field_invalid_value(shapefile_path):
     # Should return empty dataframe
     assert isinstance(result, gpd.GeoDataFrame)
     assert len(result) == 0
+
+
+@pytest.fixture
+def parquet_path(multi_shape_path, tmp_path):
+    """GeoParquet file with a second geometry column"""
+    df = gpd.read_file(multi_shape_path)
+    df['point'] = df.geometry.representative_point()
+    fname = os.path.join(tmp_path, 'multi_shapes.parquet')
+    df.to_parquet(fname)
+    return fname
+
+
+def test_parquet_getShapes(parquet_path, multi_shape_path):
+    """Test reading all shapes from GeoParquet"""
+    result = ManagerShapefile(parquet_path).getShapes()
+    assert len(result) == len(gpd.read_file(multi_shape_path))
+    assert result.geometry.name == 'geometry'
+    assert isinstance(result['point'], gpd.GeoSeries)
+
+
+def test_parquet_getShapesByGeometry(parquet_path, multi_shape_path, test_geometry, test_crs):
+    """Test that GeoParquet matches the original file, with all geometry columns reprojected"""
+    expected = ManagerShapefile(multi_shape_path, id_name='OBJECTID_1').getShapesByGeometry(test_geometry, test_crs, out_crs=test_crs)
+    result = ManagerShapefile(parquet_path, id_name='OBJECTID_1').getShapesByGeometry(test_geometry, test_crs, out_crs=test_crs)
+
+    assert len(result) > 0
+    assert list(result[names.ID]) == list(expected[names.ID])
+    assert result.geometry.geom_equals(expected.geometry, align=False).all()
+
+    assert watershed_workflow.crs.isEqual(result['point'].crs, test_crs)
+    assert result['point'].within(result.geometry).all()
+
+
+def test_parquet_getShapesByID_row_indices(parquet_path):
+    """Test getShapesByID with row indices from GeoParquet"""
+    ms = ManagerShapefile(parquet_path)
+    assert len(ms.getShapesByID(['0'])) == 1
+    assert len(ms.getShapesByID(['0', '5', '10'])) == 3
+    with pytest.raises(ValueError, match="Invalid row indices"):
+        ms.getShapesByID(['999'])

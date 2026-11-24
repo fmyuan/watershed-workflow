@@ -32,23 +32,36 @@ import folium
 import folium.plugins
 
 import watershed_workflow.crs
-import watershed_workflow.utils
+import watershed_workflow.crs as crs
+from watershed_workflow.crs import CRS
+import watershed_workflow.utils.geometry
+from watershed_workflow.io.ui import setupLogging
 import watershed_workflow.sources
 import watershed_workflow.sources.standard_names as names
 
-import watershed_workflow.river_tree
-from watershed_workflow.river_tree import River
-import watershed_workflow.split_hucs
-from watershed_workflow.split_hucs import SplitHUCs
+import watershed_workflow.hydro.river
+from watershed_workflow.hydro.river import River
+import watershed_workflow.hydro.watershed
+from watershed_workflow.hydro.watershed import Watershed
 
-import watershed_workflow.hydrography
-import watershed_workflow.resampling
-import watershed_workflow.angles
-import watershed_workflow.triangulation
-import watershed_workflow.river_mesh
-import watershed_workflow.condition
-import watershed_workflow.data
+import watershed_workflow.hydro.hydrography
+import watershed_workflow.hydro.resampling
+import watershed_workflow.hydro.angles
+import watershed_workflow.mesh.mesh
+from watershed_workflow.mesh.mesh import Mesh2D, Mesh3D
+import watershed_workflow.mesh.triangulation
+import watershed_workflow.mesh.river_mesh
+import watershed_workflow.mesh.condition
+import watershed_workflow.utils.data
 
+__all__ = [
+    # types
+    'CRS', 'River', 'Watershed', 'Mesh2D', 'Mesh3D',
+    # functions
+    'findHUC', 'reduceRivers', 'simplify', 'triangulate',
+    'tessalateRiverAligned', 'elevate', 'getDatasetOnMesh',
+    'getShapePropertiesOnMesh', 'makeMap',
+]
 
 #
 # functions for relating objects
@@ -179,29 +192,30 @@ def reduceRivers(rivers : List[River],
         rivers = rivers[0:keep_n_rivers]
         
     if ignore_small_rivers > 0:
-        rivers = watershed_workflow.river_tree.filterSmallRivers(rivers, ignore_small_rivers)
+        rivers = watershed_workflow.hydro.river.filterSmallRivers(rivers, ignore_small_rivers)
 
     if prune_by_area > 0.0:
         logging.info(f"Removing rivers with area < {prune_by_area}")
-        rivers = [r for r in rivers if r.properties[area_property] > prune_by_area]
+        rivers2 = [r for r in rivers if r.properties[area_property] > prune_by_area]
+        logging.info(f" ... removed {len(rivers) - len(rivers2)} rivers")
 
     if remove_diversions and remove_braided_divergences:
-        rivers = watershed_workflow.river_tree.filterDivergences(rivers)
+        rivers = watershed_workflow.hydro.river.filterDivergences(rivers)
     elif remove_diversions:
-        rivers = watershed_workflow.river_tree.filterDiversions(rivers)
+        rivers = watershed_workflow.hydro.river.filterDiversions(rivers)
     elif remove_braided_divergences:
-        watershed_workflow.river_tree.removeBraids(rivers)
+        watershed_workflow.hydro.river.removeBraids(rivers)
 
     if prune_by_area is not None:
-        rivers = watershed_workflow.river_tree.pruneRiversByArea(rivers, prune_by_area, area_property)
+        rivers = watershed_workflow.hydro.river.pruneRiversByArea(rivers, prune_by_area, area_property)
 
     if ignore_small_rivers > 0:
-        rivers = watershed_workflow.river_tree.filterSmallRivers(rivers, ignore_small_rivers)
+        rivers = watershed_workflow.hydro.river.filterSmallRivers(rivers, ignore_small_rivers)
 
     return rivers
 
 
-def simplify(hucs : SplitHUCs,
+def simplify(hucs : Watershed,
              rivers : List[River],
              reach_segment_target_length : float,
              huc_segment_target_length : Optional[float] = None,
@@ -217,7 +231,7 @@ def simplify(hucs : SplitHUCs,
 
     Parameters
     ----------
-    hucs : SplitHUCs
+    hucs : Watershed
        A split-form HUC object containing all reaches.
     rivers : list(River)
        A list of river objects.
@@ -280,62 +294,72 @@ def simplify(hucs : SplitHUCs,
     
     logging.info(f"Presimplify to remove colinear, coincident points.")
     presimplify = 1.e-4 * reach_segment_target_length
-    watershed_workflow.river_tree.simplify(rivers, presimplify)
-    watershed_workflow.split_hucs.simplify(hucs, presimplify)
+    watershed_workflow.hydro.river.simplify(rivers, presimplify)
+    watershed_workflow.hydro.watershed.simplify(hucs, presimplify)
 
     logging.info(rivers[0].df.crs)
     
     logging.info(f"Pruning leaf reaches < {reach_segment_target_length}")
     for river in rivers:
-        watershed_workflow.river_tree.pruneByLineStringLength(river, reach_segment_target_length)
+        watershed_workflow.hydro.river.pruneByLineStringLength(river, reach_segment_target_length)
 
     logging.info(rivers[0].df.crs)
         
     logging.info(f"Merging internal reaches < {reach_segment_target_length}")
     for river in rivers:
-        watershed_workflow.river_tree.mergeShortReaches(river, 0.75*reach_segment_target_length)
+        watershed_workflow.hydro.river.mergeShortReaches(river, 0.75*reach_segment_target_length)
 
     logging.info(rivers[0].df.crs)
         
-    watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
-    watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
         
     logging.info("Snapping discrete points to make rivers and HUCs discretely consistent.")
     logging.info(" -- snapping HUC triple junctions to reaches")
     if snap_triple_junctions_tol is None:
         snap_triple_junctions_tol = 3*reach_segment_target_length
-    watershed_workflow.hydrography.snapHUCsJunctions(hucs, rivers, snap_triple_junctions_tol)
-    watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
-    watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
+    watershed_workflow.hydro.hydrography.snapHUCsJunctions(hucs, rivers, snap_triple_junctions_tol)
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
 
     logging.info(rivers[0].df.crs)
     
     logging.info(" -- snapping reach endpoints to HUC boundaries")
     for river in rivers:
-        watershed_workflow.hydrography.snapReachEndpoints(hucs, river, reach_segment_target_length)
+        watershed_workflow.hydro.hydrography.snapReachEndpoints(hucs, river, reach_segment_target_length)
         assert river.isContinuous()
-    watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
-    watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
 
     logging.info(rivers[0].df.crs)
     
     logging.info(" -- cutting reaches at HUC boundaries")
-    watershed_workflow.hydrography.cutAndSnapCrossings(hucs, rivers, reach_segment_target_length)
+    watershed_workflow.hydro.hydrography.cutAndSnapCrossings(hucs, rivers, reach_segment_target_length)
+
     for river in rivers:
-        assert river.isContinuous()
-    watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
-    watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
+        if not river.isContinuous():
+            river.resetDataFrame()
+            ax = river.plot(color='k')
+            for node in river:
+                if not node.isLocallyContinuous():
+                    coords = np.array(list(node['geometry'].coords))
+                    ax.plot(coords[:,0], coords[:,1], 'r')
+            plt.show()
+            raise RuntimeError('Not continuous river')
+                    
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
 
     logging.info(rivers[0].df.crs)
     
     logging.info("")
     logging.info("Simplification Diagnostics")
     logging.info("-" * 30)
-    watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
-    watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
 
     logging.info(rivers[0].df.crs)
-    
+
     # resample
     logging.info("")
     logging.info("Resampling HUC and river")
@@ -346,19 +370,19 @@ def simplify(hucs : SplitHUCs,
                  river_far_distance, huc_segment_target_length)
         river_mls = shapely.ops.unary_union([river.to_mls() for river in rivers])
         logging.info(f" -- resampling HUCs based on distance function {dfunc}")
-        watershed_workflow.resampling.resampleSplitHUCs(hucs, dfunc, river_mls, keep_points=keep_points)
+        watershed_workflow.hydro.resampling.resampleWatershed(hucs, dfunc, river_mls, keep_points=keep_points)
     else:
         logging.info(f" -- resampling HUCs based on uniform target {reach_segment_target_length}")
-        watershed_workflow.resampling.resampleSplitHUCs(hucs, reach_segment_target_length, keep_points=keep_points)
+        watershed_workflow.hydro.resampling.resampleWatershed(hucs, reach_segment_target_length, keep_points=keep_points)
 
     logging.info(rivers[0].df.crs)
-
+    
     if resample_by_reach_property:
         logging.info(f" -- resampling reaches based on TARGET_SEGMENT_LENGTH property")
-        watershed_workflow.resampling.resampleRivers(rivers, keep_points=keep_points)
+        watershed_workflow.hydro.resampling.resampleRivers(rivers, keep_points=keep_points)
     else:
         logging.info(f" -- resampling reaches based on uniform target {reach_segment_target_length}")
-        watershed_workflow.resampling.resampleRivers(rivers, reach_segment_target_length, keep_points=keep_points)
+        watershed_workflow.hydro.resampling.resampleRivers(rivers, reach_segment_target_length, keep_points=keep_points)
 
     logging.info(rivers[0].df.crs)
         
@@ -367,44 +391,42 @@ def simplify(hucs : SplitHUCs,
     logging.info("-" * 30)
     if plot_diagnostics:
         fig, ax = plt.subplots(1,1)
-        watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach", ax=ax, color='b')
-        watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ", ax=ax, color='orange')
+        watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach", ax=ax, color='b')
+        watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ", ax=ax, color='orange')
     else:
-        watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
-        watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
+        watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
+        watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
 
     logging.info(rivers[0].df.crs)
-        
+    
     # fix bad angles
     logging.info("")
     logging.info("Clean up sharp angles, both internally and at junctions.")
     logging.info("-" * 30)
-    count = watershed_workflow.angles.smoothSharpAngles(hucs, rivers, min_angle, junction_min_angle)
+    count = watershed_workflow.hydro.angles.smoothSharpAngles(hucs, rivers, min_angle, junction_min_angle)
     logging.info(f"Cleaned up {count} sharp angles.")
-    watershed_workflow.utils.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
-    watershed_workflow.utils.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment((r.linestring for river in rivers for r in river), "reach")
+    watershed_workflow.utils.geometry.logMinMaxMedianSegment(hucs.linestrings, "HUC  ")
 
     logging.info(rivers[0].df.crs)
     
 
-def triangulate(hucs : SplitHUCs,
-                rivers : Optional[List[River]] = None,
-                internal_boundaries : Optional[List[shapely.geometry.BaseGeometry | River]] = None,
-                hole_points : Optional[List[shapely.geometry.Point]] = None,
-                diagnostics : bool = False,
-                verbosity : int = 1,
-                tol : float = 1.0,
-                refine_max_area : Optional[float] = None,
-                refine_distance : Optional[Tuple[float,float,float,float]] = None,
-                refine_polygons : Optional[Tuple[List[shapely.geometry.Polygon], List[float]]] = None,
-                refine_max_edge_length : Optional[float] = None,
-                refine_min_angle : Optional[float] = None,
-                enforce_delaunay : bool = False,
-                as_mesh : bool = True) -> \
-                       Tuple[np.ndarray, np.ndarray] | \
-                       watershed_workflow.mesh.Mesh2D | \
-                       Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | \
-                       Tuple[watershed_workflow.mesh.Mesh2D, np.ndarray, np.ndarray]:
+def _triangulate(hucs : Watershed,
+                 rivers : Optional[List[River]] = None,
+                 internal_boundaries : Optional[List[shapely.geometry.BaseGeometry | River]] = None,
+                 hole_points : Optional[List[shapely.geometry.Point]] = None,
+                 additional_vertices : Optional[List[Tuple[float, float]]] = None,
+                 diagnostics : bool = False,
+                 verbosity : int = 1,
+                 tol : float = 1.0,
+                 refine_max_area : Optional[float] = None,
+                 refine_distance : Optional[Tuple[float,float,float,float]] = None,
+                 refine_polygons : Optional[Tuple[List[shapely.geometry.Polygon], List[float]]] = None,
+                 refine_max_edge_length : Optional[float] = None,
+                 refine_min_angle : Optional[float] = None,
+                 enforce_delaunay : bool = False,
+                 ) ->  Tuple[np.ndarray, np.ndarray] | \
+                       Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Triangulates HUCs and rivers.
 
     Note, refinement of a given triangle is done if any of the provided
@@ -412,16 +434,18 @@ def triangulate(hucs : SplitHUCs,
 
     Parameters
     ----------
-    hucs : SplitHUCs
+    hucs : Watershed
         A split-form HUC object from, e.g., get_split_form_hucs()
-    rivers : list[watershed_workflow.river_tree.River], optional
+    rivers : list[watershed_workflow.hydro.river.River], optional
         List of rivers, used to refine the triangulation in conjunction with refine_distance.
-    internal_boundaries : list[shapely.geometry.Polygon, watershed_workflow.river_tree.River], optional
+    internal_boundaries : list[shapely.geometry.Polygon, watershed_workflow.hydro.river.River], optional
         List of objects, whose boundary (in the case of
         polygons/waterbodies) or reaches (in the case of River) will
         be present in the edges of the triangulation.
     hole_points : list(shapely.Point), optional
         List of points inside the polygons to be left as holes/voids (excluded from mesh)
+    additional_vertices : list(Tuple[float, float]), optional
+        List of points to be inlcuded in the triangulation.
     diagnostics : bool, optional
         Plot diagnostics graphs of the triangle refinement.
     tol : float, optional
@@ -485,32 +509,36 @@ def triangulate(hucs : SplitHUCs,
 
     refine_funcs = []
     if refine_max_area != None:
-        refine_funcs.append(watershed_workflow.triangulation.refineByMaxArea(refine_max_area))
+        refine_funcs.append(watershed_workflow.mesh.triangulation.refineByMaxArea(refine_max_area))
     if refine_distance != None:
         refine_funcs.append(
-            watershed_workflow.triangulation.refineByRiverDistance(*refine_distance, rivers))
+            watershed_workflow.mesh.triangulation.refineByRiverDistance(*refine_distance, rivers))
     if refine_max_edge_length != None:
         refine_funcs.append(
-            watershed_workflow.triangulation.refineByMaxEdgeLength(refine_max_edge_length))
+            watershed_workflow.mesh.triangulation.refineByMaxEdgeLength(refine_max_edge_length))
+
     if refine_polygons != None:
-        refine_funcs.append(watershed_workflow.triangulation.refineByPolygons(refine_polygons[0], refine_polygons[1]))
+        refine_funcs.append(watershed_workflow.mesh.triangulation.refineByPolygons(refine_polygons[0], refine_polygons[1]))
 
     def my_refine_func(*args):
         return any(rf(*args) for rf in refine_funcs)
 
-    vertices, triangles = watershed_workflow.triangulation.triangulate(
+    vertices, triangles = watershed_workflow.mesh.triangulation.triangulate(
         hucs,
         internal_boundaries=internal_boundaries,
         hole_points=hole_points,
+        additional_vertices=additional_vertices,
         tol=tol,
         verbose=verbose,
         refinement_func=my_refine_func,
         min_angle=refine_min_angle,
         enforce_delaunay=enforce_delaunay,
         allow_boundary_steiner=False)
-
     
-    if diagnostics:
+    if not diagnostics:
+        return vertices, triangles
+    
+    else:
         logging.info("Plotting triangulation diagnostics")
         if rivers is not None:
             river_multiline = shapely.ops.unary_union([river.to_mls() for river in rivers])
@@ -522,7 +550,7 @@ def triangulate(hucs : SplitHUCs,
                 bary = np.sum(np.array(verts), axis=0) / 3
                 bary_p = shapely.geometry.Point(bary[0], bary[1])
                 distances_l.append(bary_p.distance(river_multiline))
-                areas_l.append(watershed_workflow.utils.computeTriangleArea(*verts))
+                areas_l.append(watershed_workflow.utils.geometry.computeTriangleArea(*verts))
                 needs_refine.append(my_refine_func(verts, areas_l[-1]))
 
             distances = np.array(distances_l)
@@ -542,7 +570,7 @@ def triangulate(hucs : SplitHUCs,
                 plt.ylabel("triangle area [m^2]")
 
         else:
-            areas = np.array([watershed_workflow.utils.computeTriangleArea(*vertices[tri]) for tri in triangles])
+            areas = np.array([watershed_workflow.utils.geometry.computeTriangleArea(*vertices[tri]) for tri in triangles])
             logging.info("  min area = {}".format(areas.min()))
             logging.info("  max area = {}".format(areas.max()))
 
@@ -553,51 +581,72 @@ def triangulate(hucs : SplitHUCs,
                 plt.xlabel("area [m]")
                 plt.ylabel("count [-]")
 
-        if as_mesh:
-            m2 = watershed_workflow.mesh.Mesh2D(vertices, triangles, crs=hucs.crs)
-            return m2, areas, distances
-        else:
-            return vertices, triangles, areas, distances
+        return vertices, triangles, areas, distances
     
-    if as_mesh:
-        return watershed_workflow.mesh.Mesh2D(vertices, triangles, crs=hucs.crs)
+
+def triangulate(hucs : Watershed,
+                rivers : Optional[List[River]] = None,
+                internal_boundaries : Optional[List[shapely.geometry.BaseGeometry | River]] = None,
+                hole_points : Optional[List[shapely.geometry.Point]] = None,
+                additional_vertices : Optional[List[Tuple[float, float]]] = None,
+                diagnostics : bool = False,
+                verbosity : int = 1,
+                tol : float = 1.0,
+                refine_max_area : Optional[float] = None,
+                refine_distance : Optional[Tuple[float,float,float,float]] = None,
+                refine_polygons : Optional[Tuple[List[shapely.geometry.Polygon], List[float]]] = None,
+                refine_max_edge_length : Optional[float] = None,
+                refine_min_angle : Optional[float] = None,
+                enforce_delaunay : bool = False,
+                ) ->  watershed_workflow.mesh.mesh.Mesh2D | \
+                      Tuple[watershed_workflow.mesh.mesh.Mesh2D, np.ndarray, np.ndarray]:
+    ret = _triangulate(hucs, rivers, internal_boundaries,
+                       hole_points, additional_vertices, diagnostics,
+                       verbosity, tol, refine_max_area, refine_distance,
+                       refine_polygons, refine_max_edge_length, refine_min_angle,
+                       enforce_delaunay)
+
+    m2 = watershed_workflow.mesh.mesh.Mesh2D(ret[0], ret[1], crs=hucs.crs)
+    if len(ret) == 2:
+        return m2
     else:
-        return vertices, triangles
+        return m2, *ret[2:]
+    
 
-
-def tessalateRiverAligned(hucs : SplitHUCs,
+def tessalateRiverAligned(hucs : Watershed,
                           rivers : List[River],
-                          river_width : Any,
+                          river_width : Callable[[River], float],
                           internal_boundaries : Optional[List[River | shapely.geometry.base.BaseGeometry]] = None,
-                          as_mesh : bool = True,
+                          hole_points : Optional[List[Tuple[float, float]]] = None,
+                          additional_vertices : Optional[List[Tuple[float, float]]] = None,
+                          plot : bool = False,
                           debug : bool = False,
+                          triangulate : bool = True,
                           **kwargs) -> \
-                       Tuple[np.ndarray, List[List[int]]] | \
-                       watershed_workflow.mesh.Mesh2D | \
-                       Tuple[np.ndarray, List[List[int]], gpd.GeoDataFrame] | \
-                       Tuple[np.ndarray, List[List[int]], np.ndarray, np.ndarray] | \
-                       Tuple[watershed_workflow.mesh.Mesh2D, np.ndarray, np.ndarray]:
+                       watershed_workflow.mesh.mesh.Mesh2D | \
+                       Tuple[watershed_workflow.mesh.mesh.Mesh2D, np.ndarray, np.ndarray]:
     """Tessalate HUCs using river-aligned quads along the corridor and triangles away from it.
 
     Parameters
     ----------
-    hucs : SplitHUCs
+    hucs : Watershed
        The huc geometry to tessalate.  Note this will be adjusted if
        required by the river corridor.
     rivers : list[River]
        The rivers to mesh with quads
-    river_width : float or dict or callable or boolean 
-       Width of the quads, either a float or a dictionary providing a
-       {StreamOrder : width} mapping.
-       Or a function (callable) that computer width using node properties
-       Or boolean, where True means, width for each reach is explicitely provided properties as "width"
+    river_width : Callable[[River], float]
+        Function to compute the river width for each reach (given as a River object).
+        This callable can either return a constant value, or dynamically fetch a value 
+        based on stream order, properties, or a user-defined rule.
     river_n_quads : int, optional
        Number of quads across the river.  Currently only 1 is
        supported (the default).
-    hole_points : list(shapely.Point), optional
-        List of points inside the polygons to be left as holes/voids (excluded from mesh)
     internal_boundaries : list[shapely.Polygon], optional
        List of internal boundaries to embed in the domain, e.g. waterbodies.
+    hole_points : list(Tuple[float, float]), optional
+        List of points inside the polygons to be left as holes/voids (excluded from mesh)
+    additional_vertices : list(Tuple[float, float]), optional
+        List of points to be inlcuded in the triangulation.
     diagnostics : bool, optional
        If true, prints extra diagnostic info.
     ax : matplotlib Axes object, optional
@@ -623,31 +672,37 @@ def tessalateRiverAligned(hucs : SplitHUCs,
 
     # generate the quads
     logging.info('Creating stream-aligned mesh...')
-    computeWidth = watershed_workflow.river_mesh.createWidthFunction(river_width)
+    assert callable(river_width), "river_width must be a callable"
 
-    if debug:
-        fig, ax = plt.subplots(1,1)
+    if debug or plot:
+        fig, ax = plt.subplots(1,1, figsize=(8,12))
     else:
         ax = None
 
-    river_coords, river_elems, river_corridors, hole_points, intersections = \
-        watershed_workflow.river_mesh.createRiversMesh(hucs, rivers, computeWidth, ax=ax)
+    river_coords, river_elems, river_corridors, river_corridor_hole_points, intersections = \
+        watershed_workflow.mesh.river_mesh.createRiversMesh(hucs, rivers, river_width, ax=ax, plot=plot)
+    
+    if hole_points is not None:
+        hole_points = river_corridor_hole_points + hole_points
+    else:
+        hole_points = river_corridor_hole_points
     if debug:
         plt.show()
-    if intersections is not None:
-        return river_coords, river_elems, intersections
 
+    if intersections is not None or not triangulate:
+        return river_coords, river_elems, intersections
+        
     # triangulate the rest
     if internal_boundaries is None:
         internal_boundaries = river_corridors
     else:
         internal_boundaries = river_corridors + internal_boundaries
         
-    tri_res = watershed_workflow.triangulate(hucs, rivers, internal_boundaries,
-                                              hole_points, as_mesh=False, **kwargs)
+    logging.info('Building the remaining triangular mesh...')
+    tri_res = watershed_workflow._triangulate(hucs, rivers, internal_boundaries,
+                                              hole_points, additional_vertices,  
+                                              **kwargs)
 
-    assert not isinstance(tri_res, watershed_workflow.mesh.Mesh2D)
-    assert not isinstance(tri_res[0], watershed_workflow.mesh.Mesh2D)
     tri_coords = tri_res[0]
     tri_elems : List[List[int]] = [tri.tolist() for tri in tri_res[1]]
     
@@ -655,26 +710,34 @@ def tessalateRiverAligned(hucs : SplitHUCs,
     elems = tri_elems + river_elems
     # note, all river verts are in the tri_verts, listed first, and in the same order!
     coords = tri_coords
+    
+    # offset the GID start for the river elements
+    river_gid_offset = len(tri_elems)
+    for river in rivers:
+        river.df[names.ELEMS_GID_START] += river_gid_offset
 
-    # We could now recover the polygon linestrings in SplitHUCs, but don't... TBD --ETC
+    # We could now recover the polygon linestrings in Watershed, but don't... TBD --ETC
+    m2 = watershed_workflow.mesh.mesh.Mesh2D(coords, elems, crs=hucs.crs)
 
-    if as_mesh:
-        m2 = watershed_workflow.mesh.Mesh2D(coords, elems, crs=hucs.crs)
-        if len(tri_res) > 3:
-            return (m2, tri_res[2], tri_res[3])
-        else:
-            assert len(tri_res) == 2
-            return m2
-        
+    # refine spanning triangles -- triangles that bridge the ridge
+    # between two corridors.  Note this may need to happen multiple
+    # times, but we put a limit of 5 to avoid degenerate casees?  It's
+    # unclear whether that should happen if the code is correct, so
+    # this limit of 5 is arbitrary.
+    to_split = [-1]
+    i = 0
+    while len(to_split) > 0 and i < 5:
+        i += 1
+        logging.info('Fixing corridor-spanning triangles...')
+        m2, to_split = watershed_workflow.mesh.mesh.refineCorridorTriangles(m2, river_corridors)
+
+    if len(tri_res) > 2:
+        return m2, *tri_res[2:]
     else:
-        if len(tri_res) > 3:
-            return (coords, elems, tri_res[2], tri_res[3])
-        else:
-            assert len(tri_res) == 2
-            return (coords, elems)
+        return m2
 
         
-def elevate(m2 : watershed_workflow.mesh.Mesh2D,
+def elevate(m2 : watershed_workflow.mesh.mesh.Mesh2D,
             dem : xr.DataArray,
             **kwargs) -> None:
     """Elevate a mesh onto the provided dem, in place.
@@ -685,10 +748,11 @@ def elevate(m2 : watershed_workflow.mesh.Mesh2D,
         Mesh coordinate system.
     dem : xr.DataArray
         2D array forming an elevation raster.
-    algorithm : str, optional
-        Algorithm used for interpolation.  One of:
+    method : str, optional
+        Interpolation method, passed to interpolateValues(). One of:
+        * "linear" for piecewise bilinear interpolation (default)
         * "nearest" for nearest-neighbor pixels
-        * "piecewise bilinear" for interpolation (default)
+        * "cubic" for cubic interpolation
 
     Returns
     -------
@@ -696,10 +760,11 @@ def elevate(m2 : watershed_workflow.mesh.Mesh2D,
         Array of triangle vertices, including a z-dimension.
 
     """
+    kwargs.setdefault('method', 'linear')
     mesh_points = m2.coords
-    
+
     # index the i,j of the points, pick the elevations
-    elev = watershed_workflow.data.interpolateValues(mesh_points, m2.crs, dem, **kwargs)
+    elev = watershed_workflow.utils.data.interpolateValues(mesh_points, m2.crs, dem, **kwargs)
 
     # create the 3D points
     if mesh_points.shape[1] == 3:
@@ -709,15 +774,16 @@ def elevate(m2 : watershed_workflow.mesh.Mesh2D,
         new_points[:, 0:2] = mesh_points
         new_points[:, 2] = elev.values
         m2.coords = new_points
+        m2.clearGeometryCache()
 
 
 
-def getDatasetOnMesh(m2 : watershed_workflow.mesh.Mesh2D,
+def getDatasetOnMesh(m2 : watershed_workflow.mesh.mesh.Mesh2D,
                      data : xr.DataArray,
                      **kwargs) -> np.ndarray:
     """Interpolate xarray data onto cell centroids of a mesh."""
     mesh_points = m2.centroids
-    interpolated_data = watershed_workflow.data.interpolateValues(mesh_points, m2.crs, data, **kwargs)
+    interpolated_data = watershed_workflow.utils.data.interpolateValues(mesh_points, m2.crs, data, **kwargs)
     
     # Ensure the data type of the interpolated data matches the input data
     if not np.issubdtype(interpolated_data.dtype, data.dtype):
@@ -726,7 +792,7 @@ def getDatasetOnMesh(m2 : watershed_workflow.mesh.Mesh2D,
     return interpolated_data
 
 
-def getShapePropertiesOnMesh(m2 : watershed_workflow.mesh.Mesh2D,
+def getShapePropertiesOnMesh(m2 : watershed_workflow.mesh.mesh.Mesh2D,
                              df : gpd.GeoDataFrame,
                              column : str,
                              resolution : float,
@@ -734,7 +800,7 @@ def getShapePropertiesOnMesh(m2 : watershed_workflow.mesh.Mesh2D,
                              **kwargs
                              ) -> np.ndarray:
     """Intepolate shape data onto cell centroids of a mesh."""
-    dataarray = watershed_workflow.data.rasterizeGeoDataFrame(df, column, resolution, nodata=nodata)
+    dataarray = watershed_workflow.utils.data.rasterizeGeoDataFrame(df, column, resolution, nodata=nodata)
     return getDatasetOnMesh(m2, dataarray, **kwargs)
 
 

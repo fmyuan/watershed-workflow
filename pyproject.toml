@@ -1,6 +1,11 @@
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "INFO"
+markers = [
+    "network: marks tests that require live network access (deselect with -m 'not network')",
+    "integration: marks tests that require optional dependencies not available in CI (deselect with -m 'not integration')",
+]
+addopts = "-m 'not network and not integration'"
 
 [tool.yapf]
 based_on_style = "pep8"
@@ -14,5 +19,4 @@ blank_line_before_nested_class_or_def = false
 
 [tool.mypy]
 disable_error_code = ['import-untyped', 'import-not-found']
-
 

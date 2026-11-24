@@ -6,82 +6,18 @@ import shapely
 import xarray
 from matplotlib import pyplot as plt
 
-import watershed_workflow.condition
+import watershed_workflow.mesh.condition
 from watershed_workflow.test.shapes import *
 
 PLOT = False
 
-def make_points_1D(elevs):
-    points = {}
-    for i, e in enumerate(elevs):
-        coords = np.array([i, 0, e])
-        if i == 0:
-            neighbors = [1, ]
-        elif i == len(elevs) - 1:
-            neighbors = [i - 1, ]
-        else:
-            neighbors = [i - 1, i + 1]
-        points[i] = watershed_workflow.condition._Point(coords, neighbors)
-    return points
-
-
-def run_test_1D(elev_in, elev_out, alg):
-    points = make_points_1D(elev_in)
-    if alg == 1:
-        watershed_workflow.condition.fillPits1(points, 0)
-    elif alg == 2:
-        watershed_workflow.condition.fillPits2(points, 0)
-    elif alg == 3:
-        watershed_workflow.condition.fillPits3(points, 0)
-
-    print("GOT COORDS:")
-    print(([points[i].coords[2] for i in range(len(points))]))
-
-    for i in range(len(elev_in)):
-        assert (points[i].coords[2] == elev_out[i])
-
-
-def test_null():
-    run_test_1D([0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5], 1)
-    run_test_1D([0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5], 2)
-    run_test_1D([0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5], 3)
-
-
-def test_one_pit():
-    run_test_1D([0, 1, 3, 2, 4, 5], [0, 1, 3, 3, 4, 5], 1)
-    run_test_1D([0, 1, 3, 2, 4, 5], [0, 1, 3, 3, 4, 5], 2)
-    run_test_1D([0, 1, 3, 2, 4, 5], [0, 1, 3, 3, 4, 5], 3)
-
-
-def test_two_pit():
-    run_test_1D([0, 1, 3, 2, 1, 4], [0, 1, 3, 3, 3, 4], 1)
-    run_test_1D([0, 1, 3, 2, 1, 4], [0, 1, 3, 3, 3, 4], 2)
-    run_test_1D([0, 1, 3, 2, 1, 4], [0, 1, 3, 3, 3, 4], 3)
-
-
-def test_two_pit_backwards():
-    run_test_1D([0, 1, 3, 1, 2, 4], [0, 1, 3, 3, 3, 4], 1)
-    run_test_1D([0, 1, 3, 1, 2, 4], [0, 1, 3, 3, 3, 4], 2)
-    run_test_1D([0, 1, 3, 1, 2, 4], [0, 1, 3, 3, 3, 4], 3)
-
-
-def test_double_pit():
-    run_test_1D([0, 1, 2, 1, 3, 1, 3, 5], [0, 1, 2, 2, 3, 3, 3, 5], 1)
-    run_test_1D([0, 1, 2, 1, 3, 1, 3, 5], [0, 1, 2, 2, 3, 3, 3, 5], 2)
-    run_test_1D([0, 1, 2, 1, 3, 1, 3, 5], [0, 1, 2, 2, 3, 3, 3, 5], 3)
-
-
-def test_bad_outlet_pit():
-    run_test_1D([0, 1, 3, -1, 4, 5], [0, 1, 3, 3, 4, 5], 1)
-    run_test_1D([0, 1, 3, -1, 4, 5], [0, 1, 3, 3, 4, 5], 2)
-    run_test_1D([0, 1, 3, -1, 4, 5], [0, 1, 3, 3, 4, 5], 3)
 
 
 def make_reach(elevs):
     """Helper function to make a straight reach along y=0 given elevs."""
     linestring = shapely.geometry.LineString([(i,0,e) for (i,e) in enumerate(elevs)])
     df = gpd.GeoDataFrame(geometry=[linestring,])
-    rivers = watershed_workflow.river_tree.createRivers(df)
+    rivers = watershed_workflow.hydro.river.createRivers(df)
     return rivers[0]
 
 def plotLineString(reach, fmt, ax):
@@ -108,7 +44,7 @@ def test_smoothProfile():
     if PLOT:
         plotLineString(reach, 'k-x', ax)
 
-    watershed_workflow.condition.smoothProfile(reach)
+    watershed_workflow.mesh.condition.smoothProfile(reach)
     if PLOT:
         plotLineString(reach, 'r-+', ax)
         plt.show()
@@ -135,7 +71,7 @@ def test_smoothWithLowerProfile():
     if PLOT:
         plotLineString(reach, 'k-x', ax)
 
-    watershed_workflow.condition.smoothProfile(reach, True)
+    watershed_workflow.mesh.condition.smoothProfile(reach, True)
     if PLOT:
         plotLineString(reach, 'r-+', ax)
         plt.show()
@@ -161,7 +97,7 @@ def test_localMonotonicity1():
     if PLOT:
         plotLineString(reach, 'k-x', ax)
 
-    watershed_workflow.condition.enforceLocalMonotonicity(reach)
+    watershed_workflow.mesh.condition.enforceLocalMonotonicity(reach)
     if PLOT:
         plotLineString(reach, 'r-+', ax)
         plt.show()
@@ -185,7 +121,7 @@ def test_localMonotonicity2():
     if PLOT:
         plotLineString(reach, 'k-x', ax)
 
-    watershed_workflow.condition.enforceLocalMonotonicity(reach, moving='upstream')
+    watershed_workflow.mesh.condition.enforceLocalMonotonicity(reach, moving='upstream')
     if PLOT:
         plotLineString(reach, 'r-+', ax)
         plt.show()
@@ -217,7 +153,7 @@ def test_monotonicity():
     l2 = shapely.geometry.LineString(coords2)
     l3 = shapely.geometry.LineString(coords3)
     df = gpd.GeoDataFrame(geometry=[l1,l2,l3])
-    river = watershed_workflow.river_tree.createRivers(df)[0]
+    river = watershed_workflow.hydro.river.createRivers(df)[0]
     assert len(river) == 3
     assert not river.isMonotonic()
     coords_pre = np.concatenate([np.array(r.linestring.coords)[:,2] for r in river])
@@ -226,7 +162,7 @@ def test_monotonicity():
         for reach in river:
             plotLineString(reach, 'k-x', ax)
 
-    watershed_workflow.condition.enforceMonotonicity(river)
+    watershed_workflow.mesh.condition.enforceMonotonicity(river)
     if PLOT:
         for reach in river:
             plotLineString(reach, 'r-+', ax)
@@ -258,7 +194,7 @@ def test_monotonicityKnownDepressions():
     l2 = shapely.geometry.LineString(coords2)
     l3 = shapely.geometry.LineString(coords3)
     df = gpd.GeoDataFrame(geometry=[l1,l2,l3])
-    river = watershed_workflow.river_tree.createRivers(df)[0]
+    river = watershed_workflow.hydro.river.createRivers(df)[0]
     assert len(river) == 3
     assert not river.isMonotonic()
     coords_pre = np.concatenate([np.array(r.linestring.coords)[:,2] for r in river])
@@ -267,7 +203,7 @@ def test_monotonicityKnownDepressions():
         for reach in river:
             plotLineString(reach, 'k-x', ax)
 
-    watershed_workflow.condition.enforceMonotonicity(river, known_depressions=[1,])
+    watershed_workflow.mesh.condition.enforceMonotonicity(river, known_depressions=[1,])
     if PLOT:
         for reach in river:
             plotLineString(reach, 'r-+', ax)
@@ -290,7 +226,7 @@ def goalpost(watershed_rivers2):
     assert sum(len(r.linestring.coords) for r in river) == 19
 
     def computeWidth(a): return 10
-    m2 = watershed_workflow.tessalateRiverAligned(hucs, [river,], 10, refine_max_area=100)
+    m2 = watershed_workflow.tessalateRiverAligned(hucs, [river,], computeWidth, refine_max_area=100)
 
     # test precondition
     # different tessalates on different machines...?!?
@@ -303,9 +239,9 @@ def goalpost(watershed_rivers2):
                            dims=('x', 'y'),
                            coords={'x':[0,400], 'y':[0,500]})
 
-    watershed_workflow.condition.setProfileByDEM([river,], dem)
+    watershed_workflow.mesh.condition.setProfileByDEM([river,], dem)
     watershed_workflow.elevate(m2, dem)
-    watershed_workflow.condition.distributeProfileToMesh(m2, river)
+    watershed_workflow.mesh.condition.distributeProfileToMesh(m2, river)
 
     # should be monotonic already
     assert river.isContinuous()
@@ -319,19 +255,19 @@ def test_withHeadwaterDepress(goalpost):
 
     if PLOT:
         fig, ax = plt.subplots(1,2)
-        watershed_workflow.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[0])
+        watershed_workflow.plot.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[0])
         river.plot(color='r', marker='x', ax=ax[0])
     coords1 = m2.coords.copy()
 
     # depress
-    watershed_workflow.condition.enforceMonotonicity(river, 1)
-    watershed_workflow.condition.distributeProfileToMesh(m2, river)
+    watershed_workflow.mesh.condition.enforceMonotonicity(river, 1)
+    watershed_workflow.mesh.condition.distributeProfileToMesh(m2, river)
     m2.clearGeometryCache()
 
     coords2 = m2.coords
 
     if PLOT:
-        watershed_workflow.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[1])
+        watershed_workflow.plot.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[1])
         river.plot(color='r', marker='x', ax=ax[1])
         ax[1].set_title("Confirm river elems are all lower")
         plt.show()
@@ -347,20 +283,21 @@ def test_withDepress(goalpost):
 
     if PLOT:
         fig, ax = plt.subplots(1,2)
-        watershed_workflow.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[0])
+        watershed_workflow.plot.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[0])
         river.plot(color='r', marker='x', ax=ax[0])
     coords1 = m2.coords.copy()
 
     # depress
-    watershed_workflow.condition.enforceMonotonicity(river)
-    watershed_workflow.condition.burnInRiver(river, 1)
-    watershed_workflow.condition.distributeProfileToMesh(m2, river)
+    watershed_workflow.mesh.condition.enforceMonotonicity(river)
+    def burnInDepth(reach): return 1
+    watershed_workflow.mesh.condition.burnInRiver(river, burnInDepth)
+    watershed_workflow.mesh.condition.distributeProfileToMesh(m2, river)
     m2.clearGeometryCache()
 
     coords2 = m2.coords
 
     if PLOT:
-        watershed_workflow.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[1])
+        watershed_workflow.plot.plot.mesh(m2, color='elevation', vmin=-2, vmax=1, ax=ax[1])
         river.plot(color='r', marker='x', ax=ax[1])
         ax[1].set_title("Confirm river elems are all lower")
         plt.show()
@@ -375,20 +312,20 @@ def test_withDepressAndBanks(goalpost):
 
     if PLOT:
         fig, ax = plt.subplots(1,2)
-        watershed_workflow.plot.mesh(m2, color='elevation', vmin=0, vmax=2, ax=ax[0])
+        watershed_workflow.plot.plot.mesh(m2, color='elevation', vmin=0, vmax=2, ax=ax[0])
         river.plot(color='r', marker='x', ax=ax[0])
     coords1 = m2.coords.copy()
 
     # depress
-    watershed_workflow.condition.enforceMonotonicity(river)
-    watershed_workflow.condition.enforceBankIntegrity(m2, river, 1)
-    watershed_workflow.condition.distributeProfileToMesh(m2, river)
+    watershed_workflow.mesh.condition.enforceMonotonicity(river)
+    watershed_workflow.mesh.condition.enforceBankIntegrity(m2, river, 1)
+    watershed_workflow.mesh.condition.distributeProfileToMesh(m2, river)
     m2.clearGeometryCache()
 
     coords2 = m2.coords
 
     if PLOT:
-        watershed_workflow.plot.mesh(m2, color='elevation', vmin=0, vmax=2, ax=ax[1])
+        watershed_workflow.plot.plot.mesh(m2, color='elevation', vmin=0, vmax=2, ax=ax[1])
         river.plot(color='r', marker='x', ax=ax[1])
         ax[1].set_title("Confirm nodes neighboring river are now higher")
         plt.show()

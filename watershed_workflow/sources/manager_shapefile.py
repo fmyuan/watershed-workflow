@@ -8,14 +8,19 @@ import geopandas as gpd
 from shapely.geometry.base import BaseGeometry
 import watershed_workflow.utils
 import watershed_workflow.crs
-import watershed_workflow.warp
+import watershed_workflow.utils.warp
 from watershed_workflow.crs import CRS
 
 from . import manager_shapes
+from .manager import ManagerAttributes
 from . import standard_names as names
 
 class ManagerShapefile(manager_shapes.ManagerShapes):
     """A simple class for reading shapefiles.
+
+    Any format readable by GDAL is supported.  Files ending in
+    ``.parquet`` are read as GeoParquet, which preserves multiple geometry
+    columns (e.g. NHD reaches with their catchments).
 
     Parameters
     ----------
@@ -27,11 +32,12 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
     
     def __init__(self,
                  filename: str,
-                 url : Optional[str] = None,
-                 id_name: Optional[str] = None
+                 url: Optional[str] = None,
+                 id_name: Optional[str] = None,
+                 attrs: Optional[ManagerAttributes] = None,
                  ):
         """Initialize shapefile manager.
-        
+
         Parameters
         ----------
         filename : str
@@ -40,30 +46,27 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
             URL from which to download the file.
         id_name : str, optional
             Name of the ID field in the shapefile.
+        attrs : ManagerAttributes, optional
+            Full metadata object.  If provided, overrides the default
+            attrs constructed from filename and url.
         """
         self.filename = filename
-        self.url = url
         self.id_name = id_name
-
-        # flag to indicate that we have the file and we have processed
-        # it for metadata
+        self._is_parquet = filename.endswith('.parquet')
         self._file_preprocessed = False
-        
-        # Use basename of file as name
-        name = f'shapefile: "{os.path.basename(filename)}"'
 
-        # Use id_name or 'ID' as native_id_field
-        native_id_field = id_name if id_name is not None else 'ID'
-
-        if url is not None:
-            # url is the source
-            source = url
-        else:
-            # Use absolute path as source for complete provenance  
-            source = os.path.abspath(filename)
-
-        # Initialize base class
-        super().__init__(name, source, None, None, native_id_field)
+        if attrs is None:
+            native_id_field = id_name if id_name is not None else names.ID
+            file_source = url if url is not None else os.path.abspath(filename)
+            attrs = ManagerAttributes(
+                category='undefined',
+                product='undefined',
+                source=file_source,
+                description=f'Local shapefile: {os.path.basename(filename)}',
+                url=url,
+                native_id_field=native_id_field,
+            )
+        super().__init__(attrs)
 
     def _prerequestDataset(self):
         # first download -- this is done here and not in _request so
@@ -74,29 +77,49 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
 
         if not self._file_preprocessed:
             # Get file info to determine native CRS
-            info = pyogrio.read_info(self.filename)
-            self.native_crs_in = watershed_workflow.crs.from_string(info['crs'])
-        
+            if self._is_parquet:
+                df = gpd.read_parquet(self.filename)
+                self.attrs.native_crs_in = df.crs
+                bounds = df.total_bounds
+            else:
+                info = pyogrio.read_info(self.filename)
+                self.attrs.native_crs_in = watershed_workflow.crs.from_string(info['crs'])
+                bounds = info['total_bounds']
+
             # Estimate resolution from bounds (simple heuristic)
             # Use 1/1000th of the smallest dimension as resolution estimate
-            bounds = info['total_bounds']
             width = bounds[2] - bounds[0]
             height = bounds[3] - bounds[1]
-            self.native_resolution = min(width, height) / 1000.0
+            self.attrs.native_resolution = min(width, height) / 1000.0
 
             # only do this work once
             self._file_preprocessed = True
-        
-        
+
+
+    def _readFile(self, **kwargs) -> gpd.GeoDataFrame:
+        """Read the file, dispatching on format.
+
+        kwargs (e.g. bbox, rows) are passed to gpd.read_file.  GeoParquet
+        files are small enough to read whole; the base class handles
+        filtering by geometry.
+        """
+        if self._is_parquet:
+            df = gpd.read_parquet(self.filename)
+            if 'rows' in kwargs:
+                df = df.iloc[kwargs['rows']]
+            return df
+        return gpd.read_file(self.filename, **kwargs)
+
+
     def _getShapes(self) -> gpd.GeoDataFrame:
         """Read the file and get all shapes.
-        
+
         Returns
         -------
         gpd.GeoDataFrame
             All shapes from the shapefile.
         """
-        return gpd.read_file(self.filename)
+        return self._readFile()
 
     def _getShapesByGeometry(self, geometry_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Fetch shapes for the given geometry.
@@ -113,7 +136,7 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
         """
         # Use bbox filtering - full intersection handled by base class
         union_geometry = geometry_gdf.union_all()
-        df = gpd.read_file(self.filename, bbox=union_geometry.bounds)
+        df = self._readFile(bbox=union_geometry.bounds)
         return df
 
     def _getShapesByID(self, ids: List[str]) -> gpd.GeoDataFrame:
@@ -131,7 +154,7 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
         """
         if self.id_name is not None:
             # Read full file and filter by specified ID field
-            df = gpd.read_file(self.filename)
+            df = self._readFile()
             if self.id_name not in df.columns:
                 raise ValueError(f"ID field '{self.id_name}' not found in shapefile columns: {list(df.columns)}")
                 
@@ -151,8 +174,10 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
                 raise ValueError(f"Cannot convert IDs {ids} to integers for row-based access: {e}")
             
             # Validate indices first
-            info = pyogrio.read_info(self.filename)
-            total_rows = info['features']
+            if self._is_parquet:
+                total_rows = len(self._readFile())
+            else:
+                total_rows = pyogrio.read_info(self.filename)['features']
             valid_indices = [i for i in int_ids if 0 <= i < total_rows]
             
             if len(valid_indices) != len(int_ids):
@@ -163,11 +188,11 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
             if len(valid_indices) == 1:
                 # Read just the single row using slice
                 index = valid_indices[0]
-                df = gpd.read_file(self.filename, rows=slice(index, index + 1))
+                df = self._readFile(rows=slice(index, index + 1))
             else:
                 # Read full file and select specific rows
                 # Note: gpd.read_file(rows=list) is not supported, so we read all and filter
-                df = gpd.read_file(self.filename)
+                df = self._readFile()
                 df = df.iloc[valid_indices]
             
         return df
@@ -191,7 +216,7 @@ class ManagerShapefile(manager_shapes.ManagerShapes):
         else:
             # For row-based access or when ID field doesn't exist, use row indices
             df[names.ID] = range(len(df))
-        
+
         # No other standard name mappings for generic shapefiles
         return df
     
